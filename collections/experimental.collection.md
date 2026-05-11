@@ -10,6 +10,12 @@ Experimental and preview artifacts not yet promoted to stable collections. Items
 | **pptx**                | Creates, updates, and manages PowerPoint slide decks using YAML-driven content with python-pptx                                                                   |
 | **pptx-subagent**       | Executes PowerPoint skill operations including content extraction, YAML creation, deck building, and visual validation                                            |
 
+### Prompts
+
+| Name              | Description                                                                                 |
+|-------------------|---------------------------------------------------------------------------------------------|
+| **cspell-config** | Creates or updates the project cspell configuration with project-specific words and ignores |
+
 ### Instructions
 
 | Name                                 | Description                                                                                                                                                                                                                                                 |
@@ -24,6 +30,7 @@ Experimental and preview artifacts not yet promoted to stable collections. Items
 |--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | **customer-card-render** | Generate customer-card PowerPoint content YAML from Design Thinking canonical artifacts and build using the shared PowerPoint skill pipeline |
 | **powerpoint**           | PowerPoint slide deck generation and management using python-pptx with YAML-driven content and styling                                       |
+| **tts-voiceover**        | Text-to-speech voice-over generation from YAML speaker notes using Azure Speech SDK with SSML pronunciation control                          |
 | **video-to-gif**         | Video-to-GIF conversion skill with FFmpeg two-pass optimization                                                                              |
 | **vscode-playwright**    | VS Code screenshot capture using Playwright MCP with serve-web for slide decks and documentation                                             |
 
