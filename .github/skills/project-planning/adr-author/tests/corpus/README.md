@@ -30,3 +30,5 @@ array position:
 | 2     | `_fuzz_update_lineage_slug`   |
 
 The first byte selects the target; the remaining bytes are the input payload.
+
+*🤖 Crafted with precision by ✨Copilot following brilliant human instruction, then carefully refined by our team of discerning human reviewers.*
