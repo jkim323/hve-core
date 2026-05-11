@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the MIT License. See LICENSE in the project root for details.
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: MIT
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["shapely>=2.0", "scipy>=1.11", "networkx>=3.0", "keyring>=24.0"]
