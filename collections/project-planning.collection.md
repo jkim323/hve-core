@@ -1,4 +1,8 @@
+# Project Planning
+
 Create architecture decision records (MADR v4 + Y-Statement) with phase-gated coaching, ASR-trigger validation, supersession lineage, and per-project templates. Build PRDs, BRDs, and architecture diagrams through guided AI workflows. Evaluate AI-powered systems against Responsible AI standards and run STRIDE-based security model analysis with automated backlog generation.
+
+## Included Artifacts
 
 <!-- BEGIN AUTO-GENERATED ARTIFACTS -->
 
