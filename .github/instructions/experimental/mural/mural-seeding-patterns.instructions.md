@@ -1,5 +1,5 @@
 ---
-description: "Cross-cutting Mural seeding conventions: duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, layout primitives applied across DT, RAI, and UX/UI workflows."
+description: "Cross-cutting Mural seeding conventions: duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, z-order visibility (detection-only), layout primitives applied across DT, RAI, and UX/UI workflows."
 applyTo: '**/.github/agents/design-thinking/dt-coach.agent.md, **/.github/agents/rai-planning/rai-planner.agent.md, **/.github/agents/project-planning/ux-ui-designer.agent.md'
 ---
 
@@ -8,6 +8,14 @@ applyTo: '**/.github/agents/design-thinking/dt-coach.agent.md, **/.github/agents
 These conventions apply when an agent seeds a Mural board from a source artifact (DT method outputs, RAI Phase 2 packs, UX research notes). Workflow-specific contracts (cardinality assertions, A1/A2/A3 wedge bindings, journey-stage decompositions) live in the consuming agent. This file holds only the patterns that recur across every seeding workflow.
 
 The skill is content-agnostic transport. An under-populated board surfaces as a missing agent-side decomposition rule, not a missing skill guard rail. See [mural-writeback-hygiene.instructions.md](mural-writeback-hygiene.instructions.md) for stable channel rules and [mural-human-record.instructions.md](mural-human-record.instructions.md) for the durable-record stance.
+
+## Agent-Owned Element and Parent Intent
+
+Before generating payloads, the consuming agent chooses the Mural element type, source-artifact decomposition, expected cardinality, placement intent, and parent-area intent. Sticky notes are for short atomic cards. Textboxes are for labels, summaries, explanatory text, or longer content. Areas are for containers, phases, swimlanes, groups, and navigation zones. Shapes, connectors, or other supported widgets are selected only when the source artifact needs that visual semantics.
+
+Generated dictionary payloads must declare an explicit `type`. An untyped dictionary is a consuming-agent authoring error. String-only payloads are allowed only when the agent intentionally wants a small sticky note and the target parent area is already known.
+
+Parent-area intent is declared before creation by resolving the target area id, target anchor, relative location, or area-relative layout primitive. Raw unparented coordinates are invalid outside documented discovery and probe operations. When discovery or probe operations produce coordinates, use them only as evidence for resolving a parent, anchor, or layout primitive before bulk creation.
 
 ## Duplicate-then-Populate
 
@@ -38,13 +46,30 @@ delete(consumed_anchor_ids)
 
 ## Probe-before-Bulk
 
-Author a one-widget probe payload bound to the target area and verify `areaChain` is non-empty via `mural widget get-with-context` before bulk-populating. An empty `areaChain` is a hard stop: surface the failure with the area id and parent ids observed, do not bulk-populate into an unbound area.
+Use `mural area probe` (CLI) / `mural_area_probe` (MCP) before bulk-populating any area. The verb creates a 1×1 probe sticky bound to the target `parentId`, retrieves it with full context (`area_chain` plus siblings), runs binding and occlusion checks, and deletes the probe — returning one verdict per area:
 
-A clean probe also confirms the chosen `parentId` resolves to the intended area title, not a sibling frame with a similar name.
+* `ok` — area is safe for bulk seeding.
+* `unbound` — empty `area_chain`. Hard stop: surface the area id and observed parent ids, do not bulk-populate into an unbound area.
+* `parent_mismatch` — nearest area in the chain is not the expected `parentId`. Hard stop: a similarly named sibling frame is being targeted instead of the intended area.
+* `occluded` — probe bounding box is fully contained within one or more siblings (returned in `siblings_above`). Hard stop: a sticky that renders behind an area background panel is invisible to the human user and violates the durable-record stance in [mural-human-record.instructions.md](mural-human-record.instructions.md).
+
+A clean (`ok`) probe is also positive evidence that the chosen `parentId` resolves to the intended area title, not a sibling frame with a similar name.
+
+`widget create-bulk` enforces its own probe gate: it issues the first parented entry as a probe and inspects the returned `containment_verification.verdict`. If the verdict is not in the success set (`parent_match`, `area_chain_match`, `geometry_match`), every remaining entry that targets a parent is short-circuited with `reason: "probe_failed"` so the operator can re-anchor without burning the rest of the batch. Per-create containment verification reports the full verdict vocabulary — `parent_match`, `area_chain_match`, `geometry_match`, `parent_mismatch`, `geometry_mismatch`, `readback_failed`, `inconclusive` — and both `parent_mismatch` and `geometry_mismatch` exit non-zero. Empty or whitespace-only `--parent-id` values are rejected at argument parse time and as bulk-payload validation, before any API call.
+
+## Z-Order Visibility
+
+The Mural REST API exposes no canvas z-order operation as of May 2026 (see `https://developers.mural.co/public/reference/`). This is an upstream constraint, not a deferred skill feature: the widget endpoint surface is limited to typed `/widgets/{type}` POST/PATCH/DELETE, and the only widget field that resembles ordering, `presentationIndex`, is documented as outline-panel order, not canvas stacking. A correctly bound widget (`area_chain` non-empty, geometry inside the area) can therefore still render behind a sibling background panel, title bar, or frame.
+
+`mural area probe` / `mural_area_probe` detects this case and returns `verdict: "occluded"` with the offending sibling ids in `siblings_above`. Treat `occluded` as a hard stop that escalates to the human operator: surface the affected area id and the `siblings_above` ids, pause the seeding workflow, and ask the operator to fix stacking in the Mural UI (right-click "Send to Back" / "Bring to Front", or restructure the area's anchor widgets). Do not re-run `mural area probe`, do not destroy and recreate the widget hoping it lands on top, and do not hand-tune `(x, y)` offsets to dodge the occluding sibling. None of these patterns can defeat the API ceiling, and destroy-and-recreate also costs widget id, comments, and edit history with no determinism guarantee.
+
+Anchor Inheritance sidesteps this failure entirely when the source board ships per-area placeholders, because consumed anchors inherit both geometry and z-order slot. Prefer Anchor Inheritance whenever the source board has any per-area widgets, even ones that look purely decorative.
 
 ## Layout-Primitive Enforcement
 
 Sibling placement uses `mural layout grid`, `mural layout row`, `mural layout cluster`, or `mural layout column`. Raw `(x, y)` integer literals on widget payloads are forbidden under any condition outside the Anchor Inheritance pattern above (where coordinates are copied, never authored).
+
+Discovery and probe operations may observe raw coordinates, but their output is evidence only. Convert that evidence into a resolved `parentId`, anchor inheritance patch, or layout primitive before writing user-visible payloads.
 
 If a layout primitive cannot express the intended arrangement, escalate to a new layout verb in the skill, not to inline coordinates.
 

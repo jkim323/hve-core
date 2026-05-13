@@ -155,6 +155,8 @@ Offer naturally: "Would you like to export these artifacts to a FigJam board for
 
 Offer to seed a Mural board for the active method at the same milestones (Methods 1, 3, 4, 5, 6). Confirm the user wants the Mural board seeded for Method N before invoking the verb sequence; the agent runs the sequence inline rather than handing off to a separate prompt.
 
+Before invoking the Mural skill, own the method-specific board contract: choose the element type for each output block, decompose method artifacts into the expected widget count, resolve the target parent area or anchor for every widget, and choose the placement intent. Use sticky notes only for short atomic cards; use textboxes or areas when summaries, section labels, or grouped content need different visual semantics. Every generated widget dictionary declares an explicit `type`.
+
 Verb sequence per method:
 
 * `mural mural duplicate` (when seeding from a prior board) OR `mural template instantiate` (when starting from a template) to create the working board.

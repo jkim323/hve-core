@@ -112,6 +112,8 @@ Integrate these requirements into the accessibility section of the journey map r
 
 Offer to seed a Mural board for UX research outputs when the user wants a visible team artifact. The `mural` MCP server is required. Cross-cutting conventions (duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, layout-primitive enforcement, 404 recovery, reserved tag hygiene) are owned by `#file:.github/instructions/experimental/mural/mural-seeding-patterns.instructions.md`; do not restate the six patterns here.
 
+Before invoking the Mural skill, own the UX board contract: choose the element type for each research output, decompose artifacts into the expected item count for JTBD, Journey Stages, Pain Points, Opportunities, and Accessibility Requirements, resolve the target parent area or placeholder anchor for every widget, and choose the placement intent. UX research rows normally become explicit `sticky-note` dictionaries; use textboxes, areas, or connectors only when the artifact needs those semantics.
+
 Verb sequence:
 
 1. `mural compose bootstrap-ux-board --workspace <id> --mural <id>` to provision the five UX areas: JTBD, Journey Stages, Pain Points, Opportunities, Accessibility Requirements.

@@ -55,6 +55,8 @@ Classify risk level using the active framework's risk indicators. The default NI
 
 Offer to seed a Mural board reflecting Phase 2 risk classification when the user wants a visible team artifact. Inputs: `workspace`, `room`, `source_mural`, `project_slug`, optional `title`, optional `archive_mural_id`. Cross-cutting conventions (duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, layout-primitive enforcement, 404 recovery, reserved tag hygiene) are owned by `#file:.github/instructions/experimental/mural/mural-seeding-patterns.instructions.md`; do not restate the six patterns here.
 
+Before invoking the Mural skill, own the Phase 2 board contract: choose the element type for each generated item, decompose the source artifacts into expected A1/A2/A3 row counts, resolve the target parent area or placeholder anchor for every widget, and choose the placement intent. Phase 2 source rows normally become explicit `sticky-note` dictionaries; use other widget types only when labels, summaries, or containers are semantically required.
+
 Verb sequence:
 
 1. `mural mural get` to verify reachability of `source_mural`.
