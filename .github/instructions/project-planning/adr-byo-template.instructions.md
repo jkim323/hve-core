@@ -77,11 +77,11 @@ The agent then offers manual confirmation. The user either confirms each lineage
 
 The starter templates ship inside the `adr-author` skill bundle. The legacy template under `docs/templates/` remains available as a workspace-level fallback for compatibility.
 
-| Template Identifier | Location                                            | Purpose                                                                                                                                              |
-|---------------------|-----------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `madr-v4`           | Skill: `templates/madr-v4.md`                       | MADR v4.0.0 verbatim (CC0). Diagram slot is composed at render time with `templates/diagram-ascii.md` or `templates/diagram-mermaid.md` per `state.userPreferences.diagramFormat`. |
-| `y-statement`       | Skill: `templates/y-statement.md`                   | Y-Statement six-slot template (context, facing, decided for, achieve, accepting, contrast).                                                          |
-| Workspace fallback  | `docs/templates/adr-template-solutions.md`          | Legacy solutions-analysis template retained for repositories that already reference it.                                                              |
+| Template Identifier | Location                                   | Purpose                                                                                                                                                                            |
+|---------------------|--------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `madr-v4`           | Skill: `templates/madr-v4.md`              | MADR v4.0.0 verbatim (CC0). Diagram slot is composed at render time with `templates/diagram-ascii.md` or `templates/diagram-mermaid.md` per `state.userPreferences.diagramFormat`. |
+| `y-statement`       | Skill: `templates/y-statement.md`          | Y-Statement six-slot template (context, facing, decided for, achieve, accepting, contrast).                                                                                        |
+| Workspace fallback  | `docs/templates/adr-template-solutions.md` | Legacy solutions-analysis template retained for repositories that already reference it.                                                                                            |
 
 Frontmatter overlay `templates/madr-v4-frontmatter-overlay.md` adds ADR Creator workflow fields (`asrTriggers`, lineage links) to the verbatim MADR v4 frontmatter without modifying the upstream template body.
 
