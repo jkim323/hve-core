@@ -299,7 +299,8 @@ function Test-SkillDirectory {
         $allScriptFiles = Get-ChildItem -Path $scriptsDirPath -File -ErrorAction SilentlyContinue
         $hasPowerShell = @($allScriptFiles | Where-Object { $_.Extension -eq '.ps1' }).Count -gt 0
         $hasBash = @($allScriptFiles | Where-Object { $_.Extension -eq '.sh' }).Count -gt 0
-        $hasPython = @($allScriptFiles | Where-Object { $_.Extension -eq '.py' }).Count -gt 0
+        # Python files may be packaged in subdirectories (e.g., scripts/<pkg>/__init__.py); search recursively.
+        $hasPython = @(Get-ChildItem -Path $scriptsDirPath -File -Recurse -Filter '*.py' -ErrorAction SilentlyContinue).Count -gt 0
 
         if ($isPythonSkill) {
             # Python skills: require at least one .py, OR the traditional .ps1+.sh pair

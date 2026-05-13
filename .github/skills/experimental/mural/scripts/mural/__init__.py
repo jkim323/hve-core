@@ -25,24 +25,19 @@ from __future__ import annotations
 
 import argparse
 import base64
-import binascii
 import collections
 import concurrent.futures
 import contextlib
 import datetime
-import errno
 import getpass
 import hashlib
-import http.server
 import json
 import logging
-import math
 import os
 import pathlib
 import re
 import secrets
 import signal
-import socket
 import sys
 import threading
 import time
@@ -54,7 +49,97 @@ import uuid
 import webbrowser
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, Sequence, TypedDict
+from typing import Any, Callable, Protocol, Sequence
+
+# Re-export carved-out symbols so residual code and tests keep working.
+from ._constants import (  # noqa: E402,F401
+    _AUTHORED_BY_AI_TAG_TEXT,
+    _KNOWN_CREDENTIAL_KEYS,
+    _LINE_RE,
+    _PARENTID_FILTER_ENABLED,
+    _PROFILE_NAME_RE,
+    _PROFILE_REQUIRED_KEYS,
+    _REDACT_KEYS,
+    _REDACT_PATTERNS,
+    _REFRESH_LOCK,
+    _RESERVED_TAG_PREFIXES,
+    _RESERVED_TAGS,
+    _ROTATION_ENABLED,
+    _TAG_MERGE_BACKOFF_MAX_MS,
+    _TAG_MERGE_BACKOFF_MIN_MS,
+    _TAG_MERGE_MAX_RETRIES,
+    DEFAULT_LOGIN_SCOPES,
+    DEFAULT_PROFILE_NAME,
+    DEFAULT_REDIRECT_URI,
+    DEFAULT_SCOPES,
+    ENV_BASE_URL,
+    ENV_CLIENT_ID,
+    ENV_CLIENT_SECRET,
+    ENV_DEFAULT_WORKSPACE,
+    ENV_ENV_FILE,
+    ENV_ENV_FILE_RELAXED,
+    ENV_NONINTERACTIVE,
+    ENV_PROFILE,
+    ENV_REDIRECT_URI,
+    ENV_SCOPES,
+    ENV_TOKEN_STORE,
+    ENV_XDG_CONFIG_HOME,
+    ENV_XDG_DATA_HOME,
+    EXIT_AREA_CAPACITY,
+    EXIT_FAILURE,
+    EXIT_NOPERM,
+    EXIT_SUCCESS,
+    EXIT_TEMPFAIL,
+    EXIT_USAGE,
+    MAX_BACKOFF_SECONDS,
+    MAX_BULK_WIDGETS,
+    MAX_RETRIES,
+    MURAL_AUTHORIZE_URL,
+    MURAL_BASE_URL_DEFAULT,
+    MURAL_MAX_BODY_BYTES,
+    MURAL_MAX_FRAME_BYTES,
+    MURAL_TOKEN_URL,
+    MURAL_TOOL_TIMEOUT_SECS,
+    POLL_DEFAULT_INTERVAL_S,
+    POLL_DEFAULT_TIMEOUT_S,
+    POLL_MAX_INTERVAL_S,
+    POLL_MAX_TIMEOUT_S,
+    RATE_LIMIT_BUCKET_CAPACITY,
+    RATE_LIMIT_TOKENS_PER_SEC,
+    READ_SCOPES,
+    REFRESH_LEEWAY_SECONDS,
+    TOKEN_STORE_SCHEMA_VERSION,
+    USER_AGENT,
+    WRITE_SCOPES,
+)
+from ._credentials import (  # noqa: E402,F401
+    _profile_from_credential_path,
+    _resolve_credential_file,
+    _resolve_token_store_path,
+    _service_name_for,
+    _validate_client_secret,
+)
+from ._exceptions import (  # noqa: E402,F401
+    FrameTooLarge,
+    MCPInvalidParamsError,
+    MCPProtocolError,
+    MuralAmbiguousWorkspaceError,
+    MuralAPIError,
+    MuralAreaCapacityExceeded,
+    MuralAuthScopeError,
+    MuralBulkAtomicAbort,
+    MuralError,
+    MuralHumanAuthoredProtected,
+    MuralSecurityError,
+    MuralTagMergeConflict,
+    MuralValidationError,
+    ResponseTooLarge,
+)
+
+# Env-driven flags re-read on every package import/reload so importlib.reload(mural)
+# picks up environment changes without also reloading mural._constants.
+_ROTATION_ENABLED = os.environ.get("MURAL_SPATIAL_ROTATION_ENABLED", "0") == "1"  # noqa: F811
+_PARENTID_FILTER_ENABLED = os.environ.get("MURAL_SPATIAL_PARENTID_FILTER", "0") == "1"  # noqa: F811
 
 # Cross-platform file-lock primitives. Exactly one is non-None at runtime.
 try:  # pragma: no cover - platform-specific
@@ -123,80 +208,36 @@ def _ensure_geos_ready() -> None:
 # Constants
 # ---------------------------------------------------------------------------
 
-MURAL_BASE_URL_DEFAULT = "https://app.mural.co/api/public/v1"
-MURAL_AUTHORIZE_URL = "https://app.mural.co/api/public/v1/authorization/oauth2/"
-MURAL_TOKEN_URL = "https://app.mural.co/api/public/v1/authorization/oauth2/token"
 # Loopback redirect URI: register ``http://localhost:8765/callback`` in the
 # Mural OAuth app. The local HTTP server still binds to ``127.0.0.1`` (RFC
 # 8252 §7.3) but the URI advertised to Mural uses ``localhost`` so the
 # Mural portal accepts it (the portal rejects raw IPv4 literals as of 2024).
 # Override with MURAL_REDIRECT_URI (validated by ``_validate_redirect_uri``).
-DEFAULT_REDIRECT_URI = "http://localhost:8765/callback"
 
-ENV_BASE_URL = "MURAL_BASE_URL"
-ENV_CLIENT_ID = "MURAL_CLIENT_ID"
-ENV_CLIENT_SECRET = "MURAL_CLIENT_SECRET"
-ENV_PROFILE = "MURAL_PROFILE"
-ENV_SCOPES = "MURAL_SCOPES"
-ENV_REDIRECT_URI = "MURAL_REDIRECT_URI"
-ENV_TOKEN_STORE = "MURAL_TOKEN_STORE"
-ENV_DEFAULT_WORKSPACE = "MURAL_DEFAULT_WORKSPACE"
-ENV_XDG_DATA_HOME = "XDG_DATA_HOME"
-ENV_NONINTERACTIVE = "MURAL_NONINTERACTIVE"
-ENV_ENV_FILE = "MURAL_ENV_FILE"
-ENV_ENV_FILE_RELAXED = "MURAL_ENV_FILE_RELAXED"
-ENV_XDG_CONFIG_HOME = "XDG_CONFIG_HOME"
 
 # Credential keys recognized by the credential backend abstraction. The
 # refresh token is stored persistently per-profile alongside client_id and
 # client_secret so keyring-backed deployments can retain authentication
 # state across processes without an env file.
-_KNOWN_CREDENTIAL_KEYS: tuple[str, ...] = (
-    ENV_CLIENT_ID,
-    ENV_CLIENT_SECRET,
-    "MURAL_REFRESH_TOKEN",
-)
 
-READ_SCOPES: tuple[str, ...] = (
-    "identity:read",
-    "workspaces:read",
-    "rooms:read",
-    "murals:read",
-    "templates:read",
-)
-WRITE_SCOPES: tuple[str, ...] = ("murals:write", "templates:write", "rooms:write")
 # Maximum widgets accepted by ``mural_widget_create_bulk`` in a single call.
-MAX_BULK_WIDGETS = 1000
 # Polling defaults for ``mural_mural_poll``.
-POLL_DEFAULT_INTERVAL_S = 5.0
-POLL_MAX_INTERVAL_S = 60.0
-POLL_DEFAULT_TIMEOUT_S = 300.0
-POLL_MAX_TIMEOUT_S = 3600.0
 # Default scope string used by interactive bootstrap (``auth bootstrap``) and
 # the credential probe: the union of read and write scopes a typical first-time
 # user needs to exercise read-and-write workflows immediately after setup.
-DEFAULT_LOGIN_SCOPES = " ".join(READ_SCOPES + WRITE_SCOPES)
 # Back-compat alias: ``DEFAULT_SCOPES`` is the read-only space-separated string
 # applied when ``auth login`` runs without ``--write`` and without ``--scopes``.
-DEFAULT_SCOPES = " ".join(READ_SCOPES)
 
-USER_AGENT = "hve-core-mural/1.0"
 
 # Proactive client-side rate limit (Mural enforces ~60 req/min globally; we
 # cap at 20 req/sec per process and back off on 429 regardless).
-RATE_LIMIT_TOKENS_PER_SEC = 20.0
-RATE_LIMIT_BUCKET_CAPACITY = 20.0
 
 # 429 / transient retry policy.
-MAX_RETRIES = 3
-MAX_BACKOFF_SECONDS = 30.0
 
 # Access tokens are refreshed if they expire within this many seconds.
-REFRESH_LEEWAY_SECONDS = 60
 
 # Serializes 401-driven refreshes so concurrent callers coalesce on a single
 # token rotation instead of racing on the token store.
-_REFRESH_LOCK = threading.Lock()
 
 
 def _compute_expires_at(now: float, expires_in: int | None) -> int:
@@ -213,30 +254,14 @@ def _compute_expires_at(now: float, expires_in: int | None) -> int:
     return int(now) + seconds
 
 
-EXIT_SUCCESS = 0
-EXIT_FAILURE = 1
-EXIT_USAGE = 2
-EXIT_TEMPFAIL = 75
-EXIT_NOPERM = 77
-EXIT_AREA_CAPACITY = 65
-
 # Tag texts that are managed by the CLI and may not be removed without an
 # explicit override. The ``authored-by-ai`` tag is auto-attached to every
 # widget created by AI-driven flows so downstream consumers can distinguish
 # AI-authored objects from human-authored ones.
-_RESERVED_TAGS: frozenset[str] = frozenset({"authored-by-ai"})
-_AUTHORED_BY_AI_TAG_TEXT = "authored-by-ai"
 
 # Reserved tag text *prefixes* applied by composite/layout flows. Mutating
 # these via tag tools requires `force_reserved=True` just like literal
 # reserved tags. Kept as a separate registry so prefix membership is cheap.
-_RESERVED_TAG_PREFIXES: tuple[str, ...] = (
-    "auto-layout-hash:",
-    "dt-method:",
-    "dt-section:",
-    "cluster-label:",
-    "ai-author:",
-)
 
 
 def _is_reserved_tag_text(text: str) -> bool:
@@ -248,19 +273,10 @@ def _is_reserved_tag_text(text: str) -> bool:
     return any(text.startswith(prefix) for prefix in _RESERVED_TAG_PREFIXES)
 
 
-_TAG_MERGE_MAX_RETRIES = 3
-_TAG_MERGE_BACKOFF_MIN_MS = 50
-_TAG_MERGE_BACKOFF_MAX_MS = 200
-
 # Transport hardening limits. All overridable via env for diagnostic flexibility.
-MURAL_MAX_FRAME_BYTES = int(os.environ.get("MURAL_MAX_FRAME_BYTES", 4 * 1024 * 1024))
-MURAL_MAX_BODY_BYTES = int(os.environ.get("MURAL_MAX_BODY_BYTES", 16 * 1024 * 1024))
-MURAL_TOOL_TIMEOUT_SECS = float(os.environ.get("MURAL_TOOL_TIMEOUT_SECS", "60"))
 
 # Spatial query feature flags. Both default off until widget rotation and
 # parentId field semantics are verified against the live portal.
-_ROTATION_ENABLED = os.environ.get("MURAL_SPATIAL_ROTATION_ENABLED", "0") == "1"
-_PARENTID_FILTER_ENABLED = os.environ.get("MURAL_SPATIAL_PARENTID_FILTER", "0") == "1"
 
 # Patterns used by ``_redact``. Matches both JSON shapes and form/header
 # shapes so log-line scrubbing works regardless of payload encoding.
@@ -268,22 +284,6 @@ _PARENTID_FILTER_ENABLED = os.environ.get("MURAL_SPATIAL_PARENTID_FILTER", "0") 
 # keys below are defense-in-depth: they protect against third-party libraries
 # (urllib3, requests) and future code paths that log standard OAuth/OIDC
 # payloads using these field names.
-_REDACT_KEYS = (
-    "access_token",
-    "refresh_token",
-    "code_verifier",
-    "client_secret",
-    "id_token",  # OIDC ID Token (JWT)
-    "assertion",  # RFC 7521 §4.2 — JWT/SAML bearer grant assertion
-    "client_assertion",  # RFC 7521 §4.2 — JWT/SAML client authentication
-    "device_code",  # RFC 8628 device-authorization grant pre-auth secret
-    "password",  # RFC 6749 §4.3 ROPC credential
-)
-_REDACT_PATTERNS = [
-    # JSON-style: "key": "value"
-    (re.compile(rf'("{re.escape(k)}"\s*:\s*")([^"]*)(")'), r"\1***\3")
-    for k in _REDACT_KEYS
-]
 _REDACT_PATTERNS.extend(
     [
         # form-style: key=value (until & or whitespace)
@@ -313,220 +313,9 @@ LOGGER = logging.getLogger("mural")
 # ---------------------------------------------------------------------------
 
 
-class MuralError(Exception):
-    """Base exception for Mural CLI errors."""
-
-
-class MuralAPIError(MuralError):
-    """Raised when Mural responds with a non-2xx status."""
-
-    def __init__(
-        self,
-        status: int,
-        code: str | None,
-        message: str,
-        request_id: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-        self.request_id = request_id
-
-    def __str__(self) -> str:  # pragma: no cover - trivial formatting
-        rid = f" request_id={self.request_id}" if self.request_id else ""
-        code = f" code={self.code}" if self.code else ""
-        return f"HTTP {self.status}{code}: {self.message}{rid}"
-
-
-class MuralSecurityError(MuralError):
-    """Raised when a security invariant is violated (e.g. unsafe redirect)."""
-
-
-class MuralAmbiguousWorkspaceError(MuralError):
-    """Raised when a workspace-scoped command is invoked without a selector."""
-
-    def __init__(
-        self,
-        workspace_ids: list[str] | None = None,
-        message: str | None = None,
-    ) -> None:
-        self.workspace_ids = list(workspace_ids or [])
-        if message is None:
-            available = (
-                ", ".join(self.workspace_ids) if self.workspace_ids else "unknown"
-            )
-            message = (
-                "multiple workspaces available; pass --workspace <id> or set "
-                f"{ENV_DEFAULT_WORKSPACE} (available: {available})"
-            )
-        super().__init__(message)
-
-
-class MuralValidationError(MuralError):
-    """Raised when client-side validation rejects user input before any HTTP call."""
-
-
-class MuralAuthScopeError(MuralError):
-    """Raised when the stored token lacks an OAuth scope required by a tool."""
-
-    def __init__(self, scope: str, granted: tuple[str, ...] | list[str]) -> None:
-        self.scope = scope
-        self.granted = list(granted)
-        super().__init__(
-            f"missing required OAuth scope {scope!r}; "
-            "re-authenticate with: mural auth login --write"
-        )
-
-
-class MuralTagMergeConflict(MuralError):
-    """Raised when concurrent tag mutations cannot converge after retries.
-
-    The widget tag PATCH endpoint is a full-array replace with no ETag, so
-    racing writers can clobber each other. ``_merge_tags`` performs a
-    read-modify-write loop with bounded retries; on exhaustion this error
-    carries the diagnostic payload so callers (CLI and MCP) can surface a
-    structured ``tag_merge_conflict`` envelope.
-    """
-
-    def __init__(
-        self,
-        *,
-        mural_id: str,
-        widget_id: str,
-        intended: list[str],
-        observed: list[str],
-        attempts: int,
-    ) -> None:
-        self.mural_id = mural_id
-        self.widget_id = widget_id
-        self.intended = list(intended)
-        self.observed = list(observed)
-        self.attempts = attempts
-        intended_set = set(self.intended)
-        observed_set = set(self.observed)
-        self.missing = sorted(intended_set - observed_set)
-        self.extra = sorted(observed_set - intended_set)
-        super().__init__(
-            "tag_merge_conflict: widget "
-            f"{widget_id} on mural {mural_id} did not converge after "
-            f"{attempts} attempts (missing={self.missing}, extra={self.extra})"
-        )
-
-
-class MuralHumanAuthoredProtected(MuralError):
-    """Raised when a guarded mutation targets a widget without the AI tag.
-
-    Triggered when ``--require-author-tag`` is set on ``widget update`` or
-    ``widget delete`` and the target widget lacks the ``authored-by-ai``
-    reserved tag. Operators can opt out per-call with ``--force-human``.
-    """
-
-    def __init__(self, *, mural_id: str, widget_id: str) -> None:
-        self.mural_id = mural_id
-        self.widget_id = widget_id
-        super().__init__(
-            "human_authored_widget_protected: widget "
-            f"{widget_id} on mural {mural_id} is missing the "
-            f"{_AUTHORED_BY_AI_TAG_TEXT!r} tag; pass --force-human to override"
-        )
-
-
-class MuralAreaCapacityExceeded(MuralError):
-    """Raised when a layout would overflow the target area's bounds.
-
-    Carries the structured payload required by the refuse-don't-coerce
-    contract so the MCP/CLI surface can render
-    ``AREA_CAPACITY_EXCEEDED`` envelopes with a deterministic exit code.
-    """
-
-    def __init__(
-        self,
-        *,
-        area_id: str,
-        area_capacity: dict[str, Any],
-        computed_extent: dict[str, Any],
-        suggestion: str,
-    ) -> None:
-        self.area_id = area_id
-        self.area_capacity = dict(area_capacity)
-        self.computed_extent = dict(computed_extent)
-        self.suggestion = suggestion
-        super().__init__(
-            f"AREA_CAPACITY_EXCEEDED: area {area_id} capacity "
-            f"{area_capacity} cannot fit computed extent {computed_extent}"
-        )
-
-
-class MuralBulkAtomicAbort(MuralError):
-    """Raised when a bulk widget update is aborted at first failure under ``--atomic``.
-
-    The ``summary`` attribute carries the partial ``{succeeded, failed,
-    warnings}`` envelope that was assembled before the abort.
-    """
-
-    def __init__(self, summary: dict[str, Any]) -> None:
-        self.summary = summary
-        failed = summary.get("failed") or []
-        widget_id = (failed[0].get("widget_id") if failed else None) or "?"
-        super().__init__(
-            f"BULK_ATOMIC_ABORT: bulk update aborted at widget {widget_id}; "
-            f"{len(summary.get('succeeded') or [])} succeeded before failure"
-        )
-
-
-class FrameTooLarge(MuralError):
-    """Raised when an inbound MCP frame exceeds ``MURAL_MAX_FRAME_BYTES``."""
-
-
-class ResponseTooLarge(MuralError):
-    """Raised when an HTTP response body exceeds ``MURAL_MAX_BODY_BYTES``."""
-
-
-class MCPProtocolError(Exception):
-    """Frame- or transport-level MCP error (maps to JSON-RPC code -32700)."""
-
-
-class MCPInvalidParamsError(Exception):
-    """Schema or parameter validation error (maps to JSON-RPC code -32602).
-
-    The ``path`` attribute points to the offending location using a
-    dotted/JSON-pointer-ish notation (e.g. ``$.arguments.mural``).
-    """
-
-    def __init__(self, message: str, path: str = "$") -> None:
-        super().__init__(message)
-        self.message = message
-        self.path = path
-
-
 # ---------------------------------------------------------------------------
 # Step 2.1 — Env-var resolution, token-store I/O, PKCE helpers
 # ---------------------------------------------------------------------------
-
-
-_LINE_RE = re.compile(
-    r"^\s*(?:export\s+)?(?P<k>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<v>.*?)\s*$"
-)
-
-
-def _resolve_credential_file(
-    profile_name: str,
-    environ: Mapping[str, str] | None = None,
-) -> pathlib.Path:
-    src = environ if environ is not None else os.environ
-    explicit = src.get(ENV_ENV_FILE)
-    if explicit:
-        return pathlib.Path(explicit).expanduser()
-    filename = f"mural.{profile_name}.env"
-    xdg = src.get(ENV_XDG_CONFIG_HOME)
-    if xdg:
-        return pathlib.Path(xdg) / "hve-core" / filename
-    if os.name == "nt":
-        appdata = src.get("APPDATA")
-        if appdata:
-            return pathlib.Path(appdata) / "hve-core" / filename
-    return pathlib.Path.home() / ".config" / "hve-core" / filename
 
 
 def _check_credential_file_perms(
@@ -806,30 +595,6 @@ def _probe_keyring_availability() -> tuple[bool, str | None, str | None]:
     return _keyring_probe_cache
 
 
-def _service_name_for(profile: str) -> str:
-    """Return the keyring service name for ``profile`` honoring overrides."""
-    override = os.environ.get("MURAL_KEYRING_SERVICE")
-    if override:
-        return override
-    return f"hve-core/mural/{profile}"
-
-
-def _profile_from_credential_path(path: pathlib.Path) -> str:
-    """Derive the profile name from a credential file path's filename.
-
-    Mirrors the ``mural.{profile}.env`` convention written by
-    :func:`_resolve_credential_file`. Falls back to
-    :data:`DEFAULT_PROFILE_NAME` for arbitrary paths (e.g. when
-    ``MURAL_ENV_FILE`` overrides to a custom file).
-    """
-    name = path.name
-    if name.startswith("mural.") and name.endswith(".env"):
-        candidate = name[len("mural.") : -len(".env")]
-        if candidate and _PROFILE_NAME_RE.match(candidate):
-            return candidate
-    return DEFAULT_PROFILE_NAME
-
-
 def resolve_backend(profile: str = "default") -> CredentialBackend:
     """Return the credential backend for ``profile`` honoring env overrides.
 
@@ -958,55 +723,16 @@ def _autoload_credentials(
     return None
 
 
-def _resolve_token_store_path(env: dict[str, str] | None = None) -> pathlib.Path:
-    """Return the on-disk token store path.
-
-    Precedence: ``MURAL_TOKEN_STORE`` env var overrides everything. Otherwise:
-
-    * Windows (``os.name == "nt"``): ``%LOCALAPPDATA%/hve-core/mural-token.json``,
-      falling back to ``~/AppData/Local/hve-core/mural-token.json``.
-    * POSIX: ``$XDG_DATA_HOME/hve-core/mural-token.json``, falling back to
-      ``~/.local/share/hve-core/mural-token.json``.
-    """
-    src = env if env is not None else os.environ
-    explicit = src.get(ENV_TOKEN_STORE)
-    if explicit:
-        return pathlib.Path(explicit).expanduser()
-    if os.name == "nt":
-        local_app_data = src.get("LOCALAPPDATA")
-        if local_app_data:
-            base = pathlib.Path(local_app_data).expanduser()
-        else:
-            base = pathlib.Path.home() / "AppData" / "Local"
-    else:
-        xdg = src.get(ENV_XDG_DATA_HOME)
-        if xdg:
-            base = pathlib.Path(xdg).expanduser()
-        else:
-            base = pathlib.Path.home() / ".local" / "share"
-    return base / "hve-core" / "mural-token.json"
-
-
 # ---------------------------------------------------------------------------
 # Token-store schema v2: cross-process lock, profile envelope, migration
 # ---------------------------------------------------------------------------
 
-TOKEN_STORE_SCHEMA_VERSION = 2
-DEFAULT_PROFILE_NAME = "default"
 
 # Profile names: 1-32 chars, leading alphanumeric or underscore, then
 # alphanumeric / underscore / dot / hyphen. Rejects "..", path separators,
 # whitespace, and empty strings.
-_PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$")
 
 # Required keys on every persisted profile after migration.
-_PROFILE_REQUIRED_KEYS: tuple[str, ...] = (
-    "client_id",
-    "access_token",
-    "token_type",
-    "obtained_at",
-    "expires_at",
-)
 
 
 def _validate_profile_name(name: Any) -> str:
@@ -1606,7 +1332,9 @@ def _apply_refresh(
     profile = _select_profile(store, profile_name)
     refresh_token = profile.get("refresh_token")
     if not refresh_token:
-        raise MuralError("token store has no refresh_token; run `mural.py auth login`")
+        raise MuralError(
+            "token store has no refresh_token; run `python -m mural auth login`"
+        )
     fresh = _refresh_access_token(
         refresh_token,
         client_id=client_id,
@@ -1725,7 +1453,7 @@ def _authenticated_request(
     store = _load_token_store(store_path)
     if not store:
         raise MuralError(
-            f"no token store at {store_path}; run `mural.py auth login` first"
+            f"no token store at {store_path}; run `python -m mural auth login` first"
         )
     profile_name = _resolve_active_profile(
         store, src, profile if profile is not None else _CLI_PROFILE
@@ -1735,7 +1463,7 @@ def _authenticated_request(
     if profile_client_id and profile_client_id != client_id:
         raise MuralSecurityError(
             f"profile {profile_name!r} was issued for a different client_id; "
-            f"run `mural.py auth login` to refresh"
+            f"run `python -m mural auth login` to refresh"
         )
 
     expires_at = int(profile_data.get("expires_at") or 0)
@@ -1913,898 +1641,64 @@ def _backoff_seconds(headers_obj: Any, attempt: int) -> float:
 # ---------------------------------------------------------------------------
 # Step 2.3 — Loopback OAuth login flow
 # ---------------------------------------------------------------------------
+# Carved into ``_oauth`` for testability and module size.  Re-imported here
+# so the package surface (and ``mural.<symbol>`` test access) is unchanged.
+# PKCE primitives (``_generate_pkce_pair``/``_verify_pkce``) remain above so
+# that ``_oauth`` can import them at module-load time without a cycle on the
+# transport helpers it also depends on (``_TOKEN_OPENER`` etc.).
 
-
-def _build_authorize_url(
-    client_id: str,
-    redirect_uri: str,
-    state: str,
-    code_challenge: str,
-    scopes: str,
-    *,
-    authorize_url: str = MURAL_AUTHORIZE_URL,
-) -> str:
-    """Construct the OAuth 2.0 authorize URL with PKCE S256 parameters."""
-    if not client_id:
-        raise MuralError("client_id is required to build authorize URL")
-    if not redirect_uri:
-        raise MuralError("redirect_uri is required to build authorize URL")
-    if not state:
-        raise MuralError("state is required to build authorize URL")
-    if not code_challenge:
-        raise MuralError("code_challenge is required to build authorize URL")
-    query = {
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-        "scope": scopes,
-    }
-    return f"{authorize_url}?{urllib.parse.urlencode(query)}"
-
-
-@dataclass
-class _CallbackResult:
-    code: str | None = None
-    state: str | None = None
-    error: str | None = None
-    error_description: str | None = None
-
-
-class _LoopbackHandler(http.server.BaseHTTPRequestHandler):
-    """Single-shot HTTP handler that captures the OAuth callback query.
-
-    Hardened against drive-by callers: only ``GET /callback`` is accepted,
-    and the ``Host`` header must match the loopback bind address. Other
-    methods receive ``405`` and other paths receive ``404``. A mismatched
-    ``Host`` returns ``421`` so external scanners cannot smuggle a callback
-    via DNS rebinding or virtual-host shenanigans. Default access logging
-    is suppressed so token-bearing query strings never reach stderr.
-    """
-
-    server_version = "MuralLoopback/1.0"
-    sys_version = ""
-
-    def _reject(self, code: int, body: bytes = b"") -> None:
-        self.send_response(code)
-        if body:
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-        else:
-            self.send_header("Content-Length", "0")
-        self.end_headers()
-        if body:
-            self.wfile.write(body)
-
-    def _expected_hosts(self) -> set[str]:
-        port = getattr(self.server, "server_port", None)
-        if port is None:
-            address = getattr(self.server, "server_address", ("", 0))
-            port = address[1] if isinstance(address, tuple) and len(address) > 1 else 0
-        return {
-            f"127.0.0.1:{port}",
-            f"localhost:{port}",
-            f"[::1]:{port}",
-        }
-
-    def _host_ok(self) -> bool:
-        host = self.headers.get("Host") if getattr(self, "headers", None) else None
-        if not host:
-            return False
-        return host in self._expected_hosts()
-
-    def do_GET(self) -> None:  # noqa: N802 - http.server contract
-        if not self._host_ok():
-            self._reject(421, b"misdirected request")
-            return
-        parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path != "/callback":
-            self._reject(404, b"not found")
-            return
-        params = urllib.parse.parse_qs(parsed.query)
-        result: _CallbackResult = self.server.callback_result  # type: ignore[attr-defined]
-        result.code = (params.get("code") or [None])[0]
-        result.state = (params.get("state") or [None])[0]
-        result.error = (params.get("error") or [None])[0]
-        result.error_description = (params.get("error_description") or [None])[0]
-
-        body = (
-            "<html><body><h1>Mural authentication complete</h1>"
-            "<p>You may close this window and return to the terminal.</p>"
-            "</body></html>"
-        ).encode("utf-8")
-        if result.error:
-            self.send_response(400)
-        else:
-            self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-        # Signal the main thread that the callback has been received.
-        self.server.callback_received.set()  # type: ignore[attr-defined]
-
-    def do_POST(self) -> None:  # noqa: N802 - http.server contract
-        self._reject(405, b"method not allowed")
-
-    do_PUT = do_POST  # noqa: N815 - http.server contract
-    do_DELETE = do_POST  # noqa: N815 - http.server contract
-    do_PATCH = do_POST  # noqa: N815 - http.server contract
-    do_HEAD = do_POST  # noqa: N815 - http.server contract
-    do_OPTIONS = do_POST  # noqa: N815 - http.server contract
-
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        # Suppress default stderr access logging entirely; OAuth callbacks
-        # carry secrets in the query string and must never reach stderr.
-        return
-
-
-class _LoopbackServer(http.server.HTTPServer):
-    """HTTPServer tuned for the single-shot OAuth callback flow."""
-
-    timeout = 30
-    request_queue_size = 4
-
-    def server_bind(self) -> None:  # type: ignore[override]
-        # On Windows, request exclusive port ownership so concurrent CLI
-        # invocations cannot race onto the same loopback port.
-        if sys.platform == "win32":
-            SO_EXCLUSIVEADDRUSE = 0x4  # noqa: N806
-            with contextlib.suppress(OSError, AttributeError):
-                self.socket.setsockopt(socket.SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
-
-
-def _probe_client_credentials(
-    client_id: str,
-    client_secret: str,
-    *,
-    token_url: str = MURAL_TOKEN_URL,
-    _http: Callable[..., Any] = _TOKEN_OPENER.open,
-) -> tuple[bool, str]:
-    """Best-effort credential probe used by ``auth bootstrap`` Stage 8.
-
-    Posts a ``client_credentials`` grant to Mural's token endpoint to verify
-    the just-saved client_id/client_secret pair. Returns ``(ok, message)``;
-    ``message`` is safe to display to the user (no raw bodies, no header
-    echoes, no secrets). Network failures and 4xx responses both produce
-    ``ok=False`` with a remediation hint; only 2xx returns ``ok=True``.
-    """
-    body = urllib.parse.urlencode(
-        {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": DEFAULT_LOGIN_SCOPES,
-        }
-    ).encode("ascii")
-    request = urllib.request.Request(
-        token_url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-    )
-    try:
-        with _http(request, timeout=10) as resp:  # type: ignore[arg-type]
-            status = getattr(resp, "status", 200)
-            # Drain the body so the connection is reusable; we deliberately
-            # do not parse, log, or surface the token payload here.
-            _read_capped(resp, MURAL_MAX_BODY_BYTES)
-    except urllib.error.HTTPError as exc:
-        return (
-            False,
-            f"credentials rejected by Mural (HTTP {exc.code})",
-        )
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return (
-            False,
-            "could not reach Mural; rerun with --no-test to skip probing",
-        )
-    if 200 <= status < 300:
-        return (True, "credentials accepted by Mural")
-    return (False, f"credentials rejected by Mural (HTTP {status})")
-
-
-def _exchange_authorization_code(
-    *,
-    code: str,
-    code_verifier: str,
-    client_id: str,
-    client_secret: str | None,
-    redirect_uri: str,
-    token_url: str = MURAL_TOKEN_URL,
-    _http: Callable[..., Any] = _TOKEN_OPENER.open,
-    _now: Callable[[], float] = time.time,
-) -> dict[str, Any]:
-    body: dict[str, str] = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-        "code_verifier": code_verifier,
-        "client_id": client_id,
-    }
-    if client_secret:
-        body["client_secret"] = client_secret
-    encoded = urllib.parse.urlencode(body).encode("ascii")
-    request = urllib.request.Request(
-        token_url,
-        data=encoded,
-        method="POST",
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-    )
-    try:
-        with _http(request) as resp:  # type: ignore[arg-type]
-            data = _parse_token_response(resp)
-            status = getattr(resp, "status", 200)
-    except urllib.error.HTTPError as exc:
-        text = _read_response_body(exc).decode("utf-8", errors="replace")
-        raise MuralAPIError(
-            exc.code, "TOKEN_EXCHANGE_FAILED", text or "exchange failed"
-        ) from exc
-    if status >= 400:
-        raise MuralAPIError(status, "TOKEN_EXCHANGE_FAILED", json.dumps(data))
-    if "access_token" not in data:
-        raise MuralAPIError(
-            status, "TOKEN_EXCHANGE_INVALID_PAYLOAD", "missing access_token"
-        )
-    expires_in = int(data.get("expires_in", 0) or 0)
-    record = {
-        "access_token": data["access_token"],
-        "refresh_token": data.get("refresh_token"),
-        "token_type": data.get("token_type", "Bearer"),
-        "expires_at": _compute_expires_at(_now(), expires_in),
-        "obtained_at": int(_now()),
-    }
-    return record
-
-
-def _start_loopback_server(
-    *,
-    port: int,
-    server_factory: Callable[..., http.server.HTTPServer] = _LoopbackServer,
-    bind_host: str = "127.0.0.1",
-) -> tuple[http.server.HTTPServer, _CallbackResult, threading.Event, int]:
-    try:
-        server = server_factory((bind_host, port), _LoopbackHandler)
-    except OSError as exc:
-        if exc.errno == errno.EADDRINUSE:
-            raise MuralError(
-                f"port {port} already in use on {bind_host}; set "
-                "MURAL_REDIRECT_URI to a free loopback port and re-register "
-                "it in your Mural OAuth app"
-            ) from exc
-        raise
-    # Attach state holders the handler reads from.
-    server.callback_result = _CallbackResult()  # type: ignore[attr-defined]
-    server.callback_received = threading.Event()  # type: ignore[attr-defined]
-    bound_port = server.server_address[1]
-    return server, server.callback_result, server.callback_received, bound_port  # type: ignore[attr-defined]
-
-
-def _validate_client_secret(secret: str) -> str:
-    """Reject empty/whitespace/short Mural client secrets before persistence.
-
-    Catches the common bootstrap mistakes (paste fragment, trailing newline,
-    accidentally pasting the client_id) before they get written to keyring or
-    .env and silently fail later with an opaque ``invalid_client`` from Mural.
-    """
-    if not isinstance(secret, str):
-        raise ValueError("client secret must be a string")
-    trimmed = secret.strip()
-    if not trimmed:
-        raise ValueError("client secret is empty or whitespace only")
-    if any(ch.isspace() for ch in trimmed):
-        raise ValueError("client secret must not contain whitespace")
-    # Mural client secrets are 64-char hex tokens; 16 is a safe lower bound
-    # that catches truncated pastes without rejecting future shorter formats.
-    if len(trimmed) < 16:
-        raise ValueError(
-            f"client secret is too short ({len(trimmed)} chars); expected at least 16"
-        )
-    return trimmed
-
-
-def _validate_redirect_uri(uri: str) -> str:
-    """Reject any ``MURAL_REDIRECT_URI`` override outside the loopback allowlist.
-
-    The OAuth Authorization Code + PKCE flow only ever needs to redirect back
-    to a loopback port on this host. Anything else is treated as a security
-    violation: an attacker-controlled override could redirect the
-    authorization code to a remote host, defeating PKCE's intent. Both
-    ``localhost`` and ``127.0.0.1`` are accepted (per RFC 8252 §7.3); IPv6
-    ``[::1]`` and any other host are rejected.
-    """
-    if not isinstance(uri, str) or not uri:
-        raise MuralSecurityError("redirect_uri override is empty")
-    parsed = urllib.parse.urlsplit(uri)
-    if parsed.scheme != "http":
-        raise MuralSecurityError(
-            f"redirect_uri scheme must be http (got {parsed.scheme!r})"
-        )
-    host = (parsed.hostname or "").lower()
-    if host not in {"localhost", "127.0.0.1"}:
-        raise MuralSecurityError(
-            f"redirect_uri host must be 'localhost' or '127.0.0.1' "
-            f"(got {host!r}); IPv6 loopback ('[::1]') is not accepted"
-        )
-    port = parsed.port
-    if port is None or not (1024 <= port <= 65535):
-        raise MuralSecurityError(
-            "redirect_uri must specify a port in the range 1024-65535"
-        )
-    if parsed.path != "/callback":
-        raise MuralSecurityError(
-            f"redirect_uri path must be /callback exactly (got {parsed.path!r})"
-        )
-    if parsed.query:
-        raise MuralSecurityError("redirect_uri must not include a query string")
-    if parsed.fragment:
-        raise MuralSecurityError("redirect_uri must not include a fragment")
-    return uri
-
-
-def _resolve_redirect_uri(
-    env: dict[str, str] | None = None,
-) -> tuple[str, str, int]:
-    """Return ``(redirect_uri, bind_host, port)`` for the OAuth loopback flow.
-
-    Reads ``MURAL_REDIRECT_URI`` from ``env`` (defaulting to ``os.environ``).
-    When unset, returns ``DEFAULT_REDIRECT_URI`` (URI uses ``localhost`` so
-    the Mural portal accepts it) paired with bind host ``127.0.0.1`` per
-    RFC 8252 §7.3. When set, validates via ``_validate_redirect_uri`` and
-    parses out the host and port; an override using ``localhost`` is
-    normalised to bind host ``127.0.0.1`` to avoid IPv6 ambiguity.
-    """
-    src = env if env is not None else os.environ
-    override = src.get(ENV_REDIRECT_URI)
-    if not override:
-        return DEFAULT_REDIRECT_URI, "127.0.0.1", 8765
-    uri = _validate_redirect_uri(override)
-    parsed = urllib.parse.urlsplit(uri)
-    host = (parsed.hostname or "").lower()
-    if host == "localhost":
-        host = "127.0.0.1"
-    port = parsed.port
-    if port is None:
-        # ``_validate_redirect_uri`` enforces a port, but guard defensively
-        # so the type checker sees a concrete int.
-        raise MuralSecurityError("redirect_uri must specify a port")
-    return uri, host, port
-
-
-def _run_login(
-    *,
-    env: dict[str, str] | None = None,
-    scopes: str | None = None,
-    timeout_seconds: int = 300,
-    open_browser: Callable[[str], bool] = webbrowser.open,
-    server_factory: Callable[..., http.server.HTTPServer] = http.server.HTTPServer,
-    _http: Callable[..., Any] = _TOKEN_OPENER.open,
-    _now: Callable[[], float] = time.time,
-) -> dict[str, Any]:
-    src = env if env is not None else os.environ
-    client_id = src.get(ENV_CLIENT_ID)
-    if not client_id:
-        raise MuralError(f"{ENV_CLIENT_ID} is not set")
-    client_secret = src.get(ENV_CLIENT_SECRET) or None
-
-    redirect_uri, bind_host, port = _resolve_redirect_uri(src)
-    server, result, received, _bound_port = _start_loopback_server(
-        server_factory=server_factory, bind_host=bind_host, port=port
-    )
-
-    verifier, challenge = _generate_pkce_pair()
-    state = secrets.token_urlsafe(32)
-    authorize_url = _build_authorize_url(
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        state=state,
-        code_challenge=challenge,
-        scopes=scopes or DEFAULT_SCOPES,
-    )
-
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        _emit(f"listening on {redirect_uri}", level=logging.INFO)
-        # Emit the authorize URL to stderr before opening the browser so
-        # headless / no-DISPLAY callers (SSH, MCP stdio) can still complete
-        # the flow. ``code_challenge`` is public by PKCE design and is not
-        # in ``_REDACT_KEYS``; ``code_verifier`` is and would mangle this
-        # URL if it ever appeared here, but PKCE keeps the verifier client-
-        # side only.
-        _emit(
-            f"open this URL to authorize: {authorize_url}",
-            level=logging.INFO,
-        )
-        opened = False
-        try:
-            opened = bool(open_browser(authorize_url))
-        except Exception:  # noqa: BLE001
-            opened = False
-        if not opened:
-            print(f"open this URL manually: {authorize_url}", file=sys.stderr)
-
-        if not received.wait(timeout=timeout_seconds):
-            raise MuralError("timed out waiting for OAuth callback")
-    finally:
-        server.shutdown()
-        with contextlib.suppress(Exception):
-            server.server_close()
-
-    if result.error:
-        raise MuralError(
-            f"authorization failed: {result.error}: {result.error_description or ''}"
-        )
-    if not result.code:
-        raise MuralError("authorization callback returned no code")
-    if not result.state or not secrets.compare_digest(result.state, state):
-        raise MuralSecurityError("state parameter mismatch on OAuth callback")
-
-    record = _exchange_authorization_code(
-        code=result.code,
-        code_verifier=verifier,
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=redirect_uri,
-        _http=_http,
-        _now=_now,
-    )
-    return record
-
+from ._oauth import (  # noqa: E402,F401
+    _build_authorize_url,
+    _CallbackResult,
+    _exchange_authorization_code,
+    _LoopbackHandler,
+    _LoopbackServer,
+    _probe_client_credentials,
+    _resolve_redirect_uri,
+    _run_login,
+    _start_loopback_server,
+    _validate_redirect_uri,
+)
 
 # ---------------------------------------------------------------------------
 # Step 3 — Validation, projection, pagination, asset upload helpers
 # ---------------------------------------------------------------------------
-
-
-_MURAL_ID_RE = re.compile(r"^[A-Za-z0-9]+\.[A-Za-z0-9-]+$")
-_AZURE_BLOB_HOST_SUFFIX = ".blob.core.windows.net"
-_DEFAULT_PAGE_SIZE = 100
-_MAX_PAGE_SIZE = 200
-_MAX_CURSOR_BYTES = 4096
-_IMAGE_CONTENT_TYPES: dict[str, str] = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-}
-
-# Mural enforces a 25-character maximum on tag text.
-_MAX_TAG_TEXT_LEN = 25
-# Hyperlink href cap (defensive; Mural rejects very long URLs).
-_MAX_HYPERLINK_LEN = 1024
-# Hyperlink schemes Mural is allowed to render. Mural displays hyperlinks as
-# clickable affordances on shapes/sticky-notes, so dangerous schemes
-# (javascript:, data:, vbscript:, file:) are rejected at validation time.
-_ALLOWED_HYPERLINK_SCHEMES: frozenset[str] = frozenset({"http", "https", "mailto"})
-# Area layout values accepted by Mural's Areas API.
-_VALID_AREA_LAYOUTS: frozenset[str] = frozenset({"free", "column", "row"})
-
-# Module-level cache of area metadata keyed by area id. Populated by
-# ``_get_area`` (used by area-aware traversal helpers) and the MCP/CLI
-# ``area get`` handlers. Process-local; not persisted.
-_area_cache: dict[str, dict[str, Any]] = {}
-
-
-def _validate_mural_id(value: str) -> str:
-    """Return ``value`` after asserting it is a well-formed Mural id.
-
-    Mural ids look like ``workspace.muralslug``.  Any input containing path
-    separators, parent traversal sequences, or null bytes is rejected with
-    ``MuralValidationError`` to prevent path injection in URL construction.
-    """
-    if not isinstance(value, str) or not value:
-        raise MuralValidationError("mural id must be a non-empty string")
-    if "\x00" in value or "/" in value or "\\" in value or ".." in value:
-        raise MuralValidationError(f"mural id contains forbidden characters: {value!r}")
-    if not _MURAL_ID_RE.match(value):
-        raise MuralValidationError(
-            f"mural id must match {_MURAL_ID_RE.pattern}, got {value!r}"
-        )
-    return value
-
-
-def _extract_field(obj: Any, path: str) -> Any:
-    """Return the value at ``path`` (dotted notation) within ``obj`` or ``None``.
-
-    Accepts ``a.b.c`` and indexes both dict keys and integer list indices.
-    Never raises; missing or type-mismatched segments yield ``None``.
-    """
-    if not path:
-        return obj
-    current: Any = obj
-    for segment in path.split("."):
-        if current is None:
-            return None
-        if isinstance(current, dict):
-            current = current.get(segment)
-        elif isinstance(current, list):
-            try:
-                idx = int(segment)
-            except ValueError:
-                return None
-            if 0 <= idx < len(current):
-                current = current[idx]
-            else:
-                return None
-        else:
-            return None
-    return current
-
-
-def _project_record(record: Any, fields: list[str] | None) -> Any:
-    """Return a shallow projection of ``record`` to ``fields`` (dotted paths)."""
-    if not fields:
-        return record
-    if isinstance(record, list):
-        return [_project_record(item, fields) for item in record]
-    if not isinstance(record, dict):
-        return record
-    return {field: _extract_field(record, field) for field in fields}
-
-
-def _format_output(data: Any, fields: list[str] | None, fmt: str) -> str:
-    """Render ``data`` for stdout in ``json`` or ``table`` form."""
-    projected = _project_record(data, fields)
-    if fmt == "table":
-        rows = projected if isinstance(projected, list) else [projected]
-        if not rows:
-            return ""
-        keys = fields or sorted({k for r in rows if isinstance(r, dict) for k in r})
-        if not keys:
-            return ""
-        widths = [
-            max(
-                len(k),
-                *(len(str(_extract_field(r, k) or "")) for r in rows),
-            )
-            for k in keys
-        ]
-        header = "  ".join(k.ljust(w) for k, w in zip(keys, widths))
-        sep = "  ".join("-" * w for w in widths)
-        body_lines = [
-            "  ".join(
-                str(_extract_field(r, k) or "").ljust(w) for k, w in zip(keys, widths)
-            )
-            for r in rows
-        ]
-        return "\n".join([header, sep, *body_lines])
-    return json.dumps(projected, indent=2)
-
-
-def _parse_pagination_cursor(token: str) -> dict[str, Any]:
-    """Decode and validate an opaque pagination cursor token.
-
-    The cursor is treated as base64url-encoded JSON.  Tokens larger than
-    ``_MAX_CURSOR_BYTES`` raw bytes or that fail to decode are rejected with
-    ``MuralValidationError``; the helper exists primarily as a fuzzable seam.
-    """
-    if not isinstance(token, str) or not token:
-        raise MuralValidationError("cursor token must be a non-empty string")
-    if len(token.encode("utf-8")) > _MAX_CURSOR_BYTES:
-        raise MuralValidationError("cursor token exceeds maximum size")
-    padding = "=" * (-len(token) % 4)
-    try:
-        raw = base64.urlsafe_b64decode(token + padding)
-    except (binascii.Error, ValueError) as exc:
-        raise MuralValidationError("cursor token is not base64url") from exc
-    try:
-        decoded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise MuralValidationError("cursor token payload is not JSON") from exc
-    if not isinstance(decoded, dict):
-        raise MuralValidationError("cursor token payload must be a JSON object")
-    return decoded
-
-
-# Defensive unwrap of {"value": <dict>} single-GET envelope; passthrough otherwise.
-def _unwrap_value_envelope(record: Any) -> Any:
-    if (
-        isinstance(record, dict)
-        and list(record.keys()) == ["value"]
-        and isinstance(record["value"], dict)
-    ):
-        return record["value"]
-    return record
-
-
-def _paginate(
-    method: str,
-    path: str,
-    *,
-    params: dict[str, Any] | None = None,
-    limit: int | None = None,
-    page_size: int | None = None,
-    max_pages: int | None = None,
-    **request_kwargs: Any,
-) -> Any:
-    """Yield records across Mural's ``next``-cursor pagination.
-
-    ``params`` is applied to every page so that ``type``, ``parentId``, and
-    other filters remain consistent per Mural's pagination contract.
-    ``page_size`` maps to the ``limit`` query parameter.  ``limit`` (the
-    function argument) caps the total number of records yielded.
-    ``max_pages`` caps the number of API requests made (use ``1`` to disable
-    cursor following for debugging).
-    """
-    base_params = dict(params or {})
-    if page_size is not None:
-        base_params["limit"] = int(page_size)
-    yielded = 0
-    pages = 0
-    next_token: str | None = None
-    while True:
-        page_params = dict(base_params)
-        if next_token is not None:
-            page_params["next"] = next_token
-        response = _authenticated_request(
-            method, path, params=page_params, **request_kwargs
-        )
-        pages += 1
-        if isinstance(response, dict) and "value" in response:
-            records = response.get("value") or []
-            next_token = response.get("next") or None
-        elif isinstance(response, list):
-            records = response
-            next_token = None
-        else:
-            yield response
-            return
-        for record in records:
-            yield record
-            yielded += 1
-            if limit is not None and yielded >= limit:
-                return
-        if not next_token:
-            return
-        if max_pages is not None and pages >= max_pages:
-            return
-
-
-def _resolve_workspace_id(
-    explicit: str | None,
-    *,
-    env: dict[str, str] | None = None,
-    **request_kwargs: Any,
-) -> str:
-    """Return the workspace id, falling back to env or list discovery."""
-    src = env if env is not None else os.environ
-    if explicit:
-        return explicit
-    fallback = src.get(ENV_DEFAULT_WORKSPACE)
-    if fallback:
-        return fallback
-    workspaces = list(_paginate("GET", "/workspaces", env=src, **request_kwargs))
-    ids = [w.get("id") for w in workspaces if isinstance(w, dict) and w.get("id")]
-    if len(ids) == 1:
-        return ids[0]
-    raise MuralAmbiguousWorkspaceError(workspace_ids=ids)
-
-
-def _validate_asset_url(url: str) -> None:
-    """Raise ``MuralSecurityError`` when ``url`` is not a safe Azure SAS link.
-
-    SSRF allowlist: requires https, no userinfo, no fragment, no IP-literal
-    host, and a hostname ending in ``.blob.core.windows.net``.
-    """
-    if not isinstance(url, str) or not url:
-        raise MuralSecurityError("asset upload url is empty")
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https":
-        raise MuralSecurityError(
-            f"asset upload url must be https, got {parsed.scheme!r}"
-        )
-    if parsed.username or parsed.password:
-        raise MuralSecurityError("asset upload url must not contain userinfo")
-    if parsed.fragment:
-        raise MuralSecurityError("asset upload url must not contain a fragment")
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise MuralSecurityError("asset upload url has no host")
-    # Reject bare IPv4 (all dots+digits) and bracketed IPv6 (':' present).
-    if host.replace(".", "").isdigit() or ":" in host:
-        raise MuralSecurityError(
-            f"asset upload url host must be a name, not an address: {host!r}"
-        )
-    if not host.endswith(_AZURE_BLOB_HOST_SUFFIX):
-        raise MuralSecurityError(
-            f"asset upload url host {host!r} is not on the Azure Blob allowlist"
-        )
-
-
-def _parse_json_arg(value: str, flag: str) -> Any:
-    """Parse a JSON CLI argument, raising ``MuralValidationError`` on failure."""
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise MuralValidationError(f"{flag} is not valid JSON: {exc}") from exc
-
-
-def _coerce_xy(value: Any, name: str) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise MuralValidationError(f"{name} must be numeric, got {value!r}") from exc
-
-
-def _validate_hyperlink(value: Any) -> str:
-    """Return ``value`` after asserting it is a safe hyperlink string.
-
-    Enforces a non-empty string, a ``_MAX_HYPERLINK_LEN`` cap, and an
-    allowlist of URL schemes (``http``, ``https``, ``mailto``). Dangerous
-    schemes such as ``javascript:``, ``data:``, ``vbscript:``, and
-    ``file:`` are rejected because Mural surfaces hyperlinks as clickable
-    affordances on widgets and would otherwise enable cross-tenant
-    phishing or script execution against viewers.
-    """
-    if not isinstance(value, str) or not value:
-        raise MuralValidationError("hyperlink must be a non-empty string")
-    if len(value) > _MAX_HYPERLINK_LEN:
-        raise MuralValidationError(
-            f"hyperlink exceeds {_MAX_HYPERLINK_LEN}-character limit"
-        )
-    try:
-        scheme = urllib.parse.urlsplit(value).scheme.lower()
-    except ValueError as exc:
-        raise MuralValidationError(f"hyperlink is not a parseable URL: {exc}") from exc
-    if scheme not in _ALLOWED_HYPERLINK_SCHEMES:
-        allowed = ", ".join(sorted(_ALLOWED_HYPERLINK_SCHEMES))
-        raise MuralValidationError(
-            f"hyperlink scheme {scheme!r} is not allowed (allowed: {allowed})"
-        )
-    return value
-
-
-def _validate_tag_text(value: Any) -> str:
-    """Return ``value`` after asserting it is non-empty and ≤25 characters."""
-    if not isinstance(value, str) or not value:
-        raise MuralValidationError("tag text must be a non-empty string")
-    if len(value) > _MAX_TAG_TEXT_LEN:
-        raise MuralValidationError(
-            f"tag text exceeds {_MAX_TAG_TEXT_LEN}-character limit"
-        )
-    return value
-
-
-def _validate_area_layout(value: Any) -> str:
-    """Return ``value`` if it is one of ``free|column|row``."""
-    if value not in _VALID_AREA_LAYOUTS:
-        raise MuralValidationError(
-            "area layout must be one of: " + ", ".join(sorted(_VALID_AREA_LAYOUTS))
-        )
-    return value
-
-
-def _build_area_body(args: argparse.Namespace) -> dict[str, Any]:
-    if not getattr(args, "title", None):
-        raise MuralValidationError("--title is required for area create")
-    body: dict[str, Any] = {
-        "title": args.title,
-        "x": _coerce_xy(args.x, "--x"),
-        "y": _coerce_xy(args.y, "--y"),
-    }
-    if getattr(args, "width", None) is not None:
-        body["width"] = _coerce_xy(args.width, "--width")
-    if getattr(args, "height", None) is not None:
-        body["height"] = _coerce_xy(args.height, "--height")
-    layout = getattr(args, "layout", None)
-    if layout:
-        body["layout"] = _validate_area_layout(layout)
-    parent_id = getattr(args, "parent_id", None)
-    if parent_id:
-        body["parentId"] = parent_id
-    return body
-
-
-def _build_sticky_note_body(args: argparse.Namespace) -> dict[str, Any]:
-    if not getattr(args, "text", None):
-        raise MuralValidationError("--text is required for sticky-note widgets")
-    body: dict[str, Any] = {
-        "text": args.text,
-        "x": _coerce_xy(args.x, "--x"),
-        "y": _coerce_xy(args.y, "--y"),
-        "shape": getattr(args, "shape", None) or "rectangle",
-    }
-    if getattr(args, "width", None) is not None:
-        body["width"] = _coerce_xy(args.width, "--width")
-    if getattr(args, "height", None) is not None:
-        body["height"] = _coerce_xy(args.height, "--height")
-    if getattr(args, "style", None):
-        body["style"] = _parse_json_arg(args.style, "--style")
-    if getattr(args, "hyperlink", None):
-        body["hyperlink"] = _validate_hyperlink(args.hyperlink)
-    return body
-
-
-def _build_textbox_body(args: argparse.Namespace) -> dict[str, Any]:
-    if not getattr(args, "text", None):
-        raise MuralValidationError("--text is required for textbox widgets")
-    body: dict[str, Any] = {
-        "text": args.text,
-        "x": _coerce_xy(args.x, "--x"),
-        "y": _coerce_xy(args.y, "--y"),
-    }
-    if getattr(args, "width", None) is not None:
-        body["width"] = _coerce_xy(args.width, "--width")
-    if getattr(args, "height", None) is not None:
-        body["height"] = _coerce_xy(args.height, "--height")
-    if getattr(args, "style", None):
-        body["style"] = _parse_json_arg(args.style, "--style")
-    if getattr(args, "hyperlink", None):
-        body["hyperlink"] = _validate_hyperlink(args.hyperlink)
-    return body
-
-
-def _build_shape_body(args: argparse.Namespace) -> dict[str, Any]:
-    if not getattr(args, "shape", None):
-        raise MuralValidationError("--shape is required for shape widgets")
-    body: dict[str, Any] = {
-        "shape": args.shape,
-        "x": _coerce_xy(args.x, "--x"),
-        "y": _coerce_xy(args.y, "--y"),
-    }
-    if getattr(args, "width", None) is not None:
-        body["width"] = _coerce_xy(args.width, "--width")
-    if getattr(args, "height", None) is not None:
-        body["height"] = _coerce_xy(args.height, "--height")
-    if getattr(args, "text", None):
-        body["text"] = args.text
-    if getattr(args, "style", None):
-        body["style"] = _parse_json_arg(args.style, "--style")
-    if getattr(args, "hyperlink", None):
-        body["hyperlink"] = _validate_hyperlink(args.hyperlink)
-    return body
-
-
-def _build_arrow_body(args: argparse.Namespace) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "x1": _coerce_xy(getattr(args, "x1", None), "--x1"),
-        "y1": _coerce_xy(getattr(args, "y1", None), "--y1"),
-        "x2": _coerce_xy(getattr(args, "x2", None), "--x2"),
-        "y2": _coerce_xy(getattr(args, "y2", None), "--y2"),
-    }
-    if getattr(args, "style", None):
-        body["style"] = _parse_json_arg(args.style, "--style")
-    if getattr(args, "hyperlink", None):
-        body["hyperlink"] = _validate_hyperlink(args.hyperlink)
-    return body
-
-
-def _build_image_body(
-    *,
-    asset_name: str,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "name": asset_name,
-        "x": _coerce_xy(args.x, "--x"),
-        "y": _coerce_xy(args.y, "--y"),
-    }
-    if getattr(args, "width", None) is not None:
-        body["width"] = _coerce_xy(args.width, "--width")
-    if getattr(args, "height", None) is not None:
-        body["height"] = _coerce_xy(args.height, "--height")
-    if getattr(args, "title", None):
-        body["title"] = args.title
-    alt_text = getattr(args, "alt_text", None)
-    if alt_text:
-        body["altText"] = alt_text
-    if getattr(args, "hyperlink", None):
-        body["hyperlink"] = _validate_hyperlink(args.hyperlink)
-    return body
+# Carved into ``_validation`` for testability and module size.  Re-imported
+# here so the package surface (and ``mural.<symbol>`` test access) is
+# unchanged.
+from ._validation import (  # noqa: E402,F401
+    _ALLOWED_HYPERLINK_SCHEMES,
+    _AZURE_BLOB_HOST_SUFFIX,
+    _DEFAULT_PAGE_SIZE,
+    _IMAGE_CONTENT_TYPES,
+    _MAX_CURSOR_BYTES,
+    _MAX_HYPERLINK_LEN,
+    _MAX_PAGE_SIZE,
+    _MAX_TAG_TEXT_LEN,
+    _MURAL_ID_RE,
+    _VALID_AREA_LAYOUTS,
+    _area_cache,
+    _build_area_body,
+    _build_arrow_body,
+    _build_image_body,
+    _build_shape_body,
+    _build_sticky_note_body,
+    _build_textbox_body,
+    _coerce_xy,
+    _extract_field,
+    _format_output,
+    _paginate,
+    _parse_json_arg,
+    _parse_pagination_cursor,
+    _project_record,
+    _resolve_workspace_id,
+    _unwrap_value_envelope,
+    _validate_area_layout,
+    _validate_asset_url,
+    _validate_hyperlink,
+    _validate_mural_id,
+    _validate_tag_text,
+)
 
 
 def _create_asset_url(
@@ -3088,7 +1982,7 @@ _LOGOUT_TRANSPARENCY_LINES: tuple[str, ...] = (
     "Credentials have been cleared from this machine.",
     (
         "Your Mural OAuth tokens may remain active server-side until they "
-        "expire (access tokens have a short TTL, typically ~15 minutes; "
+        "expire (access tokens have a documented 15-minute TTL; "
         "refresh tokens persist longer and are not rotated on use)."
     ),
     (
@@ -3204,7 +2098,7 @@ def _cmd_auth_setup(args: argparse.Namespace) -> int:
                         f"{exc}",
                         level=logging.WARNING,
                     )
-    next_step = f"mural.py auth login --profile {profile_name}"
+    next_step = f"python -m mural auth login --profile {profile_name}"
     if json_mode:
         print(
             json.dumps(
@@ -3489,7 +2383,7 @@ def _cmd_auth_use(args: argparse.Namespace) -> int:
     with _token_store_session(path) as (store, commit):
         if not store:
             _emit(
-                f"no token store at {path}; run `mural.py auth login` first",
+                f"no token store at {path}; run `python -m mural auth login` first",
                 level=logging.ERROR,
             )
             return EXIT_FAILURE
@@ -4246,20 +3140,14 @@ def _emit_record(record: Any, args: argparse.Namespace) -> int:
 
 
 def _get_area(mural_id: str, area_id: str) -> dict[str, Any]:
-    """Return area metadata for ``area_id``, fetching it on cache miss.
-
-    Populates :data:`_area_cache` so repeated traversal stays O(1).  The
-    cache is a process-local hint — callers must treat ``parentId``,
-    ``layout`` and bounds as authoritative only at fetch time.
-    """
-    cached = _area_cache.get(area_id)
-    if cached is not None:
-        return cached
-    record = _authenticated_request("GET", f"/murals/{mural_id}/areas/{area_id}")
-    if not isinstance(record, dict):
-        raise MuralAPIError(0, "AREA_INVALID", "area response is not an object")
-    _area_cache[area_id] = record
-    return record
+    """Return area metadata for ``area_id``, fetching it on cache miss."""
+    return _get_area_impl(
+        mural_id,
+        area_id,
+        area_cache=_area_cache,
+        authenticated_request=_authenticated_request,
+        MuralAPIError=MuralAPIError,
+    )
 
 
 def _walk_area_chain(mural_id: str, parent_id: str | None) -> list[dict[str, Any]]:
@@ -4292,91 +3180,72 @@ _AREA_FALLBACK_LOGGED: set[str] = set()
 
 
 def _log_area_fallback_once(mural_id: str) -> None:
-    if mural_id in _AREA_FALLBACK_LOGGED:
-        return
-    _AREA_FALLBACK_LOGGED.add(mural_id)
-    LOGGER.warning(
-        "Mural %s returned 404 on /areas; falling back to /widgets?type=area.",
+    _log_area_fallback_once_impl(
         mural_id,
+        logged_mural_ids=_AREA_FALLBACK_LOGGED,
+        logger=LOGGER,
     )
 
 
 def _list_areas_with_widget_fallback(
     mural_id: str, **paginate_kwargs: Any
 ) -> list[dict[str, Any]]:
-    """List areas, transparently falling back to ``/widgets?type=area`` on 404.
-
-    Yields the dedicated endpoint's output when available.  When the
-    server responds 404 to ``/murals/{id}/areas`` (e.g. legacy boards
-    where the dedicated endpoint is not provisioned), refetches from the
-    widgets endpoint with a ``type=area`` filter and seeds
-    :data:`_area_cache` so subsequent ``_get_area`` lookups stay O(1).
-    """
-    try:
-        return list(_paginate("GET", f"/murals/{mural_id}/areas", **paginate_kwargs))
-    except MuralAPIError as exc:
-        if exc.status != 404:
-            raise
-    _log_area_fallback_once(mural_id)
-    records = list(
-        _paginate(
-            "GET",
-            f"/murals/{mural_id}/widgets",
-            params={"type": "area"},
-            **paginate_kwargs,
-        )
+    """List areas, transparently falling back to ``/widgets?type=area`` on 404."""
+    return _list_areas_with_widget_fallback_impl(
+        mural_id,
+        paginate=_paginate,
+        area_cache=_area_cache,
+        log_area_fallback_once=_log_area_fallback_once,
+        MuralAPIError=MuralAPIError,
+        **paginate_kwargs,
     )
-    for record in records:
-        if isinstance(record, dict):
-            area_id = record.get("id")
-            if isinstance(area_id, str):
-                _area_cache[area_id] = record
-    return records
 
 
 def _get_area_with_widget_fallback(mural_id: str, area_id: str) -> dict[str, Any]:
     """Get an area, transparently falling back to ``/widgets/{id}`` on 404."""
-    try:
-        return _get_area(mural_id, area_id)
-    except MuralAPIError as exc:
-        if exc.status != 404:
-            raise
-    _log_area_fallback_once(mural_id)
-    record = _authenticated_request("GET", f"/murals/{mural_id}/widgets/{area_id}")
-    if not isinstance(record, dict):
-        raise MuralAPIError(404, "AREA_INVALID", "widget response is not an object")
-    if record.get("type") != "area":
-        raise MuralAPIError(
-            404,
-            "AREA_INVALID",
-            f"widget {area_id} is not an area (type={record.get('type')!r})",
-        )
-    _area_cache[area_id] = record
-    return record
+    return _get_area_with_widget_fallback_impl(
+        mural_id,
+        area_id,
+        get_area=_get_area,
+        authenticated_request=_authenticated_request,
+        area_cache=_area_cache,
+        log_area_fallback_once=_log_area_fallback_once,
+        MuralAPIError=MuralAPIError,
+    )
+
+
+_PROBE_TEXT = "[probe-before-bulk]"
+_PROBE_SHAPE = "rectangle"
+
+
+def _area_probe(mural_id: str, area_id: str) -> dict[str, Any]:
+    """Create a disposable sticky-note probe inside ``area_id`` and diagnose."""
+    return _area_probe_impl(
+        mural_id,
+        area_id,
+        get_area_with_widget_fallback=_get_area_with_widget_fallback,
+        authenticated_request=_authenticated_request,
+        resolve_widget_id=_resolve_widget_id,
+        get_widget_with_context=_get_widget_with_context,
+        area_probe_verdict=_area_probe_verdict,
+        logger=LOGGER,
+        redact=_redact,
+        MuralAPIError=MuralAPIError,
+        MuralError=MuralError,
+        probe_text=_PROBE_TEXT,
+        probe_shape=_PROBE_SHAPE,
+    )
 
 
 def _get_widget_with_context(mural_id: str, widget_id: str) -> dict[str, Any]:
     """Return the widget plus its area_chain, siblings, and cluster envelope."""
-    widget = _authenticated_request("GET", f"/murals/{mural_id}/widgets/{widget_id}")
-    parent_id = widget.get("parentId") if isinstance(widget, dict) else None
-    area_chain = _walk_area_chain(mural_id, parent_id) if parent_id else []
-    siblings: list[Any] = []
-    if parent_id:
-        siblings = [
-            w
-            for w in _paginate(
-                "GET",
-                f"/murals/{mural_id}/widgets",
-                params={"parentId": parent_id},
-            )
-            if isinstance(w, dict) and w.get("id") != widget_id
-        ]
-    return {
-        "widget": widget,
-        "area_chain": area_chain,
-        "siblings": siblings,
-        "cluster": None,
-    }
+    return _get_widget_with_context_impl(
+        mural_id,
+        widget_id,
+        authenticated_request=_authenticated_request,
+        paginate=_paginate,
+        walk_area_chain=_walk_area_chain,
+    )
 
 
 def _list_widgets_with_context(
@@ -4388,32 +3257,32 @@ def _list_widgets_with_context(
     page_size: int | None = None,
 ) -> list[dict[str, Any]]:
     """List widgets and attach an ``area_chain`` to each entry."""
-    params: dict[str, Any] = {}
-    if widget_type:
-        params["type"] = widget_type
-    if parent_id:
-        params["parentId"] = parent_id
-    widgets = list(
-        _paginate(
-            "GET",
-            f"/murals/{mural_id}/widgets",
-            params=params or None,
-            limit=limit,
-            page_size=page_size,
-        )
+    return _list_widgets_with_context_impl(
+        mural_id,
+        paginate=_paginate,
+        walk_area_chain=_walk_area_chain,
+        widget_type=widget_type,
+        parent_id=parent_id,
+        limit=limit,
+        page_size=page_size,
     )
-    enriched: list[dict[str, Any]] = []
-    for widget in widgets:
-        if not isinstance(widget, dict):
-            continue
-        widget_parent = widget.get("parentId")
-        chain = _walk_area_chain(mural_id, widget_parent) if widget_parent else []
-        enriched.append({"widget": widget, "area_chain": chain, "cluster": None})
-    return enriched
 
 
 # --- Tag manifest helper --------------------------------------------------
 
+from ._tag_helpers import (  # noqa: E402
+    _assert_widget_has_author_tag_impl,
+    _create_tag_impl,
+    _ensure_reserved_author_tag_impl,
+    _ensure_tag_manifest_impl,
+    _is_reserved_tag_id_impl,
+    _is_tag_cap_error_impl,
+    _maybe_apply_author_tag_impl,
+    _merge_tags_impl,
+    _resolve_widget_id_impl,
+    _tag_merge_backoff_seconds_impl,
+    _widget_tag_ids_impl,
+)
 
 _TAG_CAP_HINTS: tuple[str, ...] = (
     "tag limit",
@@ -4424,26 +3293,20 @@ _TAG_CAP_HINTS: tuple[str, ...] = (
 
 
 def _is_tag_cap_error(exc: MuralAPIError) -> bool:
-    if exc.status != 400:
-        return False
-    haystack = " ".join(str(part).lower() for part in (exc.code, exc.message) if part)
-    return any(hint in haystack for hint in _TAG_CAP_HINTS)
+    return _is_tag_cap_error_impl(exc, tag_cap_hints=_TAG_CAP_HINTS)
 
 
 def _create_tag(mural_id: str, text: str, color: str | None = None) -> dict[str, Any]:
-    body: dict[str, Any] = {"text": _validate_tag_text(text)}
-    if color:
-        body["color"] = color
-    try:
-        return _authenticated_request(
-            "POST", f"/murals/{mural_id}/tags", json_body=body
-        )
-    except MuralAPIError as exc:
-        if _is_tag_cap_error(exc):
-            raise MuralValidationError(
-                f"tag_cap_reached: {exc.message or exc.code}"
-            ) from exc
-        raise
+    return _create_tag_impl(
+        mural_id,
+        text,
+        color,
+        validate_tag_text=_validate_tag_text,
+        authenticated_request=_authenticated_request,
+        is_tag_cap_error=_is_tag_cap_error,
+        MuralAPIError=MuralAPIError,
+        MuralValidationError=MuralValidationError,
+    )
 
 
 def _ensure_tag_manifest(
@@ -4456,31 +3319,14 @@ def _ensure_tag_manifest(
     returns the combined mapping.  Subsequent calls with the same manifest
     issue zero POSTs.
     """
-    if not isinstance(manifest, list):
-        raise MuralValidationError("tag manifest must be a list of objects")
-    existing = list(_paginate("GET", f"/murals/{mural_id}/tags"))
-    by_text: dict[str, str] = {}
-    for tag in existing:
-        if not isinstance(tag, dict):
-            continue
-        text = tag.get("text")
-        tag_id = tag.get("id")
-        if isinstance(text, str) and isinstance(tag_id, str):
-            by_text[text] = tag_id
-    for entry in manifest:
-        if not isinstance(entry, dict):
-            raise MuralValidationError("tag manifest entries must be objects")
-        text = entry.get("text")
-        if not isinstance(text, str):
-            raise MuralValidationError("tag manifest entry missing text")
-        if text in by_text:
-            continue
-        created = _create_tag(mural_id, text, entry.get("color"))
-        new_id = created.get("id") if isinstance(created, dict) else None
-        if not isinstance(new_id, str):
-            raise MuralAPIError(0, "TAG_INVALID", "tag create response missing id")
-        by_text[text] = new_id
-    return by_text
+    return _ensure_tag_manifest_impl(
+        mural_id,
+        manifest,
+        paginate=_paginate,
+        create_tag=_create_tag,
+        MuralAPIError=MuralAPIError,
+        MuralValidationError=MuralValidationError,
+    )
 
 
 def _widget_tag_ids(widget: Any) -> list[str]:
@@ -4492,25 +3338,7 @@ def _widget_tag_ids(widget: Any) -> list[str]:
     helper unwraps that envelope before reading ``tags`` so guard checks fed
     raw ``_authenticated_request`` responses do not produce false negatives.
     """
-    if not isinstance(widget, dict):
-        return []
-    inner = widget.get("value")
-    if isinstance(inner, dict) and "tags" in inner:
-        widget = inner
-    raw = widget.get("tags")
-    if not isinstance(raw, list):
-        return []
-    out: list[str] = []
-    for entry in raw:
-        if isinstance(entry, str):
-            out.append(entry)
-        elif isinstance(entry, dict):
-            for key in ("id", "tagId", "tag_id"):
-                value = entry.get(key)
-                if isinstance(value, str):
-                    out.append(value)
-                    break
-    return out
+    return _widget_tag_ids_impl(widget)
 
 
 def _tag_merge_backoff_seconds() -> float:
@@ -4519,9 +3347,11 @@ def _tag_merge_backoff_seconds() -> float:
     Uses :mod:`secrets` (already imported for OAuth) to avoid pulling in
     :mod:`random` solely for jitter. Range is 50-200ms inclusive.
     """
-    span = _TAG_MERGE_BACKOFF_MAX_MS - _TAG_MERGE_BACKOFF_MIN_MS + 1
-    millis = _TAG_MERGE_BACKOFF_MIN_MS + secrets.randbelow(span)
-    return millis / 1000.0
+    return _tag_merge_backoff_seconds_impl(
+        randbelow=secrets.randbelow,
+        backoff_min_ms=_TAG_MERGE_BACKOFF_MIN_MS,
+        backoff_max_ms=_TAG_MERGE_BACKOFF_MAX_MS,
+    )
 
 
 def _merge_tags(
@@ -4542,88 +3372,33 @@ def _merge_tags(
     50-200ms jittered delay between them. On exhaustion :class:`MuralTagMergeConflict`
     is raised so callers can surface a structured envelope.
     """
-    add_set = set(additions or ())
-    remove_set = set(removals or ())
-    if not add_set and not remove_set:
-        return {
-            "ok": True,
-            "widget": widget_id,
-            "tags": [],
-            "added": [],
-            "removed": [],
-            "attempts": 0,
-            "noop": True,
-        }
-    attempts = 0
-    last_observed: list[str] = []
-    target: list[str] = []
-    while attempts < max_retries:
-        attempts += 1
-        widget = _authenticated_request(
-            "GET", f"/murals/{mural_id}/widgets/{widget_id}"
-        )
-        current = set(_widget_tag_ids(widget))
-        target_set = (current | add_set) - remove_set
-        target = sorted(target_set)
-        inner = widget.get("value") if isinstance(widget, dict) else None
-        discovered_type: str | None = None
-        if isinstance(inner, dict):
-            t = inner.get("type")
-            if isinstance(t, str):
-                discovered_type = t
-        if discovered_type is None and isinstance(widget, dict):
-            t = widget.get("type")
-            if isinstance(t, str):
-                discovered_type = t
-        _patch_widget_or_disambiguate_404(
-            mural_id, widget_id, {"tags": target}, widget_type=discovered_type
-        )
-        observed_widget = _authenticated_request(
-            "GET", f"/murals/{mural_id}/widgets/{widget_id}"
-        )
-        last_observed = sorted(set(_widget_tag_ids(observed_widget)))
-        if set(last_observed) == target_set:
-            actually_added = sorted(target_set - current)
-            actually_removed = sorted(current & remove_set)
-            _session_manifest_record(mural_id, widget_id, target)
-            return {
-                "ok": True,
-                "widget": widget_id,
-                "tags": target,
-                "added": actually_added,
-                "removed": actually_removed,
-                "attempts": attempts,
-            }
-        if attempts < max_retries:
-            time.sleep(_tag_merge_backoff_seconds())
-    raise MuralTagMergeConflict(
-        mural_id=mural_id,
-        widget_id=widget_id,
-        intended=target,
-        observed=last_observed,
-        attempts=attempts,
+    return _merge_tags_impl(
+        mural_id,
+        widget_id,
+        additions=additions,
+        removals=removals,
+        max_retries=max_retries,
+        authenticated_request=_authenticated_request,
+        widget_tag_ids=_widget_tag_ids,
+        patch_widget_or_disambiguate_404=_patch_widget_or_disambiguate_404,
+        session_manifest_record=_session_manifest_record,
+        tag_merge_backoff_seconds=_tag_merge_backoff_seconds,
+        MuralTagMergeConflict=MuralTagMergeConflict,
     )
 
 
 def _ensure_reserved_author_tag(mural_id: str) -> str:
     """Return the tag id for ``authored-by-ai`` on ``mural_id`` (creating it)."""
-    mapping = _ensure_tag_manifest(mural_id, [{"text": _AUTHORED_BY_AI_TAG_TEXT}])
-    return mapping[_AUTHORED_BY_AI_TAG_TEXT]
+    return _ensure_reserved_author_tag_impl(
+        mural_id,
+        ensure_tag_manifest=_ensure_tag_manifest,
+        authored_by_ai_tag_text=_AUTHORED_BY_AI_TAG_TEXT,
+    )
 
 
 def _resolve_widget_id(record: Any) -> str | None:
     """Best-effort extraction of a widget id from a create response payload."""
-    if not isinstance(record, dict):
-        return None
-    candidate = record.get("id")
-    if isinstance(candidate, str) and candidate:
-        return candidate
-    value = record.get("value")
-    if isinstance(value, dict):
-        candidate = value.get("id")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
+    return _resolve_widget_id_impl(record)
 
 
 def _maybe_apply_author_tag(
@@ -4635,975 +3410,132 @@ def _maybe_apply_author_tag(
     or when the widget id cannot be resolved, and emits a stderr warning on
     soft failure so the surrounding create operation is not rolled back.
     """
-    if skip:
-        return None
-    widget_id = _resolve_widget_id(record)
-    if not widget_id:
-        return None
-    try:
-        tag_id = _ensure_reserved_author_tag(mural_id)
-        return _merge_tags(mural_id, widget_id, additions=[tag_id])
-    except MuralError as exc:
-        print(
-            f"warning: could not attach 'authored-by-ai' tag to {widget_id}: {exc}",
-            file=sys.stderr,
-        )
-        return None
+    return _maybe_apply_author_tag_impl(
+        mural_id,
+        record,
+        skip=skip,
+        resolve_widget_id=_resolve_widget_id,
+        ensure_reserved_author_tag=_ensure_reserved_author_tag,
+        merge_tags=_merge_tags,
+        MuralError=MuralError,
+    )
 
 
 def _assert_widget_has_author_tag(mural_id: str, widget_id: str) -> None:
     """Raise :class:`MuralHumanAuthoredProtected` if the AI tag is absent."""
-    tag_id = _ensure_reserved_author_tag(mural_id)
-    widget = _authenticated_request("GET", f"/murals/{mural_id}/widgets/{widget_id}")
-    if tag_id not in _widget_tag_ids(widget):
-        raise MuralHumanAuthoredProtected(mural_id=mural_id, widget_id=widget_id)
+    _assert_widget_has_author_tag_impl(
+        mural_id,
+        widget_id,
+        ensure_reserved_author_tag=_ensure_reserved_author_tag,
+        authenticated_request=_authenticated_request,
+        widget_tag_ids=_widget_tag_ids,
+        MuralHumanAuthoredProtected=MuralHumanAuthoredProtected,
+    )
 
 
 def _is_reserved_tag_id(mural_id: str, tag_id: str) -> bool:
     """Return ``True`` when ``tag_id`` matches a reserved tag (literal or prefix)."""
-    for tag in _paginate("GET", f"/murals/{mural_id}/tags"):
-        if not isinstance(tag, dict):
-            continue
-        if tag.get("id") == tag_id and _is_reserved_tag_text(tag.get("text") or ""):
-            return True
-    return False
+    return _is_reserved_tag_id_impl(
+        mural_id,
+        tag_id,
+        paginate=_paginate,
+        is_reserved_tag_text=_is_reserved_tag_text,
+    )
 
 
 # --- AABB rect helpers and spatial queries -------------------------------
 
-# Lightweight axis-aligned bounding rectangle (AABB) primitives used by
-# spatial verbs and widget-projection helpers, together with the spatial
-# query helpers that compose them (widget filtering, polygon area, and
-# point-in-polygon). All functions in this section are pure (no I/O, no
-# module-level mutation) so they are safe to call from CLI subparsers, MCP
-# tools, and test fixtures alike.
-
-
-class Rect(TypedDict):
-    """Axis-aligned bounding rectangle in Mural canvas coordinates.
-
-    ``x``/``y`` is the top-left corner in canvas units; ``w``/``h`` are
-    non-negative dimensions. Use ``safe_rect`` to construct a ``Rect`` from
-    arbitrary signed inputs.
-    """
-
-    x: float
-    y: float
-    w: float
-    h: float
-
-
-def safe_rect(x: float, y: float, w: float, h: float) -> Rect:
-    """Return a ``Rect`` with non-negative ``w``/``h``.
-
-    Negative dimensions are sign-corrected by translating the origin and
-    absoluting the dimension, which preserves the geometric footprint while
-    yielding a canonical AABB shape that downstream helpers can rely on.
-    """
-    nx = x if w >= 0 else x + w
-    ny = y if h >= 0 else y + h
-    return {"x": nx, "y": ny, "w": abs(w), "h": abs(h)}
-
-
-def point_in_rect(px: float, py: float, rect: Rect, eps: float = 1e-6) -> bool:
-    """Return ``True`` when ``(px, py)`` lies inside ``rect``.
-
-    Inclusion is tested against an eps-expanded boundary so floating-point
-    edge points still test true. ``eps`` defaults to ``1e-6``, matching the
-    Mural canvas's effective sub-pixel precision.
-    """
-    return (
-        rect["x"] - eps <= px <= rect["x"] + rect["w"] + eps
-        and rect["y"] - eps <= py <= rect["y"] + rect["h"] + eps
-    )
-
-
-def rects_overlap(a: Rect, b: Rect, eps: float = 1e-6) -> bool:
-    """Return ``True`` when ``a`` and ``b`` share any area or touch on an edge.
-
-    Touching edges count as overlap (configurable via ``eps``); strict
-    separation requires a gap larger than ``eps`` on at least one axis.
-    """
-    return not (
-        a["x"] + a["w"] < b["x"] - eps
-        or b["x"] + b["w"] < a["x"] - eps
-        or a["y"] + a["h"] < b["y"] - eps
-        or b["y"] + b["h"] < a["y"] - eps
-    )
-
-
-def rect_intersection(a: Rect, b: Rect) -> Rect | None:
-    """Return the intersection ``Rect`` of ``a`` and ``b``, or ``None``.
-
-    A zero-area intersection (touching edge or corner) is returned as a
-    ``Rect`` with ``w`` and/or ``h`` equal to zero so callers can distinguish
-    "touching" from "fully disjoint".
-    """
-    ix = max(a["x"], b["x"])
-    iy = max(a["y"], b["y"])
-    ix2 = min(a["x"] + a["w"], b["x"] + b["w"])
-    iy2 = min(a["y"] + a["h"], b["y"] + b["h"])
-    if ix2 < ix or iy2 < iy:
-        return None
-    return {"x": ix, "y": iy, "w": ix2 - ix, "h": iy2 - iy}
-
-
-def rect_contains_rect(outer: Rect, inner: Rect, eps: float = 1e-6) -> bool:
-    """Return ``True`` when ``inner`` is fully contained within ``outer``.
-
-    Containment is tested with an eps tolerance on every edge so floating
-    point boundary cases (e.g. coordinates produced by rotation math) still
-    classify correctly.
-    """
-    return (
-        inner["x"] >= outer["x"] - eps
-        and inner["y"] >= outer["y"] - eps
-        and inner["x"] + inner["w"] <= outer["x"] + outer["w"] + eps
-        and inner["y"] + inner["h"] <= outer["y"] + outer["h"] + eps
-    )
-
-
-def _shape_to_rect(
-    widget: dict[str, Any], *, rotation_aware: bool | None = None
-) -> Rect:
-    """Project a Mural ``widget`` geometry into an axis-aligned bounding rect.
-
-    When ``rotation_aware`` is ``False`` the widget's ``rotation`` field is
-    ignored and the unrotated rect is returned. When ``True`` the four
-    corners are rotated about the rect center and the AABB of those rotated
-    corners is returned, matching how rotated widgets actually occupy canvas
-    space. Passing ``None`` (the default) defers to the module-level
-    ``_ROTATION_ENABLED`` constant, which is set at import time from the
-    ``MURAL_SPATIAL_ROTATION_ENABLED`` env flag (``"1"`` enables rotation
-    awareness); explicit ``True``/``False`` always overrides the constant.
-    """
-    if rotation_aware is None:
-        rotation_aware = _ROTATION_ENABLED
-    x = float(widget.get("x", 0.0) or 0.0)
-    y = float(widget.get("y", 0.0) or 0.0)
-    w = float(widget.get("width", 0.0) or 0.0)
-    h = float(widget.get("height", 0.0) or 0.0)
-    base = safe_rect(x, y, w, h)
-    if not rotation_aware:
-        return base
-    rotation = float(widget.get("rotation", 0.0) or 0.0)
-    if rotation % 360.0 == 0.0:
-        return base
-    rad = math.radians(rotation)
-    cos_a = math.cos(rad)
-    sin_a = math.sin(rad)
-    cx = base["x"] + base["w"] / 2.0
-    cy = base["y"] + base["h"] / 2.0
-    half_w = base["w"] / 2.0
-    half_h = base["h"] / 2.0
-    xs: list[float] = []
-    ys: list[float] = []
-    for dx, dy in (
-        (-half_w, -half_h),
-        (half_w, -half_h),
-        (half_w, half_h),
-        (-half_w, half_h),
-    ):
-        rx = dx * cos_a - dy * sin_a
-        ry = dx * sin_a + dy * cos_a
-        xs.append(cx + rx)
-        ys.append(cy + ry)
-    min_x = min(xs)
-    min_y = min(ys)
-    max_x = max(xs)
-    max_y = max(ys)
-    return {"x": min_x, "y": min_y, "w": max_x - min_x, "h": max_y - min_y}
-
-
-def widget_center(
-    widget: dict[str, Any], *, rotation_aware: bool | None = None
-) -> tuple[float, float]:
-    """Return the ``(cx, cy)`` AABB center of ``widget``.
-
-    Always classify a widget by its center, never by its left/top edge:
-    column-membership, lane assignment, and any "which region owns this
-    sticky" decision must use this helper so a wide widget straddling a
-    boundary is attributed to the column its mass actually sits in. Defers
-    to ``_shape_to_rect`` so rotation handling matches ``widgets_in_region``.
-    """
-    rect = _shape_to_rect(widget, rotation_aware=rotation_aware)
-    return (rect["x"] + rect["w"] / 2.0, rect["y"] + rect["h"] / 2.0)
-
-
-def widgets_in_region(
-    widgets: list[dict[str, Any]],
-    region: Rect,
-    *,
-    mode: str = "center",
-) -> list[dict[str, Any]]:
-    """Return widgets whose geometry intersects ``region`` per ``mode``.
-
-    ``mode='center'`` includes a widget when its bounding-box center lies
-    inside ``region`` (using ``point_in_rect`` semantics). ``mode='bbox'``
-    includes a widget when its AABB overlaps ``region`` (using
-    ``rects_overlap`` semantics, which counts touching edges as overlap).
-    Empty input returns an empty list. Output is stably sorted by widget
-    ``id`` so callers see deterministic ordering across runs. Unknown
-    ``mode`` values raise ``ValueError``.
-    """
-    if not widgets:
-        return []
-    if mode not in ("center", "bbox"):
-        raise ValueError(f"unknown mode: {mode!r}")
-    matched: list[dict[str, Any]] = []
-    for widget in widgets:
-        if mode == "center":
-            cx, cy = widget_center(widget)
-            if point_in_rect(cx, cy, region):
-                matched.append(widget)
-        else:
-            rect = _shape_to_rect(widget)
-            if rects_overlap(rect, region):
-                matched.append(widget)
-    return sorted(matched, key=lambda w: str(w.get("id", "")))
-
-
-def widgets_in_shape(
-    widgets: list[dict[str, Any]],
-    shape_widget: dict[str, Any],
-    *,
-    mode: str = "center",
-    rotation_aware: bool = False,
-) -> list[dict[str, Any]]:
-    """Return widgets contained by ``shape_widget``'s AABB.
-
-    Composes ``_shape_to_rect(shape_widget, rotation_aware=rotation_aware)``
-    with ``widgets_in_region`` so a frame, area, or rotated container can
-    act as the query region. ``rotation_aware=True`` expands the container's
-    AABB to enclose its rotated corners; the default leaves rotation
-    handling to the env flag policy of ``_shape_to_rect``. Output ordering
-    is the deterministic widget-id sort produced by ``widgets_in_region``.
-    """
-    region = _shape_to_rect(shape_widget, rotation_aware=rotation_aware)
-    return widgets_in_region(widgets, region, mode=mode)
-
-
-def pairwise_overlaps(
-    widgets: list[dict[str, Any]],
-    *,
-    predicate: str = "intersects",
-    rotation_aware: bool | None = None,
-) -> list[tuple[str, str]]:
-    """Return overlapping widget id pairs using a ``shapely.STRtree`` index.
-
-    Builds an STR R-tree from each widget's AABB (computed via
-    ``_shape_to_rect`` so the rotation-aware policy of the spatial module
-    is respected) and queries every geometry against the tree. Results are
-    deduped to a single ordered pair ``(a, b)`` with ``a < b`` per widget
-    id and sorted lexicographically so callers see deterministic output.
-    Empty input returns ``[]``. Unknown ``predicate`` values raise
-    ``ValueError``. ``rotation_aware`` left as ``None`` (the sentinel)
-    defers to ``_ROTATION_ENABLED`` mirroring the env flag policy of
-    ``_shape_to_rect``.
-    """
-    _ensure_geos_ready()
-    if not widgets:
-        return []
-    if predicate not in ("intersects", "contains"):
-        raise ValueError(f"unknown predicate: {predicate!r}")
-    if rotation_aware is None:
-        rotation_aware = _ROTATION_ENABLED
-    from shapely.geometry import box
-    from shapely.strtree import STRtree
-
-    geoms = []
-    ids = []
-    for widget in widgets:
-        rect = _shape_to_rect(widget, rotation_aware=rotation_aware)
-        geoms.append(
-            box(
-                rect["x"],
-                rect["y"],
-                rect["x"] + rect["w"],
-                rect["y"] + rect["h"],
-            )
-        )
-        ids.append(str(widget.get("id", "")))
-    tree = STRtree(geoms)
-    pairs: set[tuple[str, str]] = set()
-    for i, geom in enumerate(geoms):
-        candidates = tree.query(geom)
-        for j in candidates:
-            j_int = int(j)
-            if j_int == i:
-                continue
-            if predicate == "intersects":
-                if not geom.intersects(geoms[j_int]):
-                    continue
-                a, b = ids[i], ids[j_int]
-                if a == b:
-                    continue
-                if a > b:
-                    a, b = b, a
-                pairs.add((a, b))
-            else:  # predicate == "contains"
-                if not geom.contains(geoms[j_int]):
-                    continue
-                a, b = ids[i], ids[j_int]
-                if a == b:
-                    continue
-                if a > b:
-                    a, b = b, a
-                pairs.add((a, b))
-    return sorted(pairs)
-
-
-def cluster_widgets(
-    widgets: list[dict[str, Any]],
-    *,
-    eps_px: float = 120.0,
-    min_samples: int = 2,
-) -> list[list[str]]:
-    """Group widgets by spatial proximity of their AABB centers via DBSCAN.
-
-    Projects each widget's bounding-box center (computed via
-    ``_shape_to_rect`` so the rotation-aware policy of the spatial module
-    is respected) into a 2D point, then runs a density-based clustering
-    pass using a ``scipy.spatial.cKDTree`` for ``eps_px``-radius
-    neighborhood queries. Empty input returns ``[]``. Noise points (those
-    with fewer than ``min_samples`` neighbors within ``eps_px``) are
-    omitted; setting ``min_samples=1`` keeps isolated widgets as
-    singletons. Each returned cluster is a sorted list of widget ids; the
-    outer list is sorted by descending cluster size with a stable
-    lexicographic tiebreak on the smallest member id so callers see
-    deterministic output across runs. ``eps_px`` must be ``> 0`` and
-    ``min_samples`` must be ``>= 1``; other values raise ``ValueError``.
-    """
-    if not widgets:
-        return []
-    if eps_px <= 0:
-        raise ValueError(f"eps_px must be > 0; got {eps_px!r}")
-    if min_samples < 1:
-        raise ValueError(f"min_samples must be >= 1; got {min_samples!r}")
-    from scipy.spatial import cKDTree
-
-    ids: list[str] = []
-    points: list[tuple[float, float]] = []
-    for widget in widgets:
-        rect = _shape_to_rect(widget)
-        ids.append(str(widget.get("id", "")))
-        points.append(
-            (
-                rect["x"] + rect["w"] / 2.0,
-                rect["y"] + rect["h"] / 2.0,
-            )
-        )
-    tree = cKDTree(points)
-    neighbors = tree.query_ball_point(points, r=eps_px)
-
-    unclassified = -2
-    noise = -1
-    labels = [unclassified] * len(points)
-    next_cluster = 0
-    for i in range(len(points)):
-        if labels[i] != unclassified:
-            continue
-        seeds = list(neighbors[i])
-        if len(seeds) < min_samples:
-            labels[i] = noise
-            continue
-        labels[i] = next_cluster
-        queue = list(seeds)
-        seen = set(seeds)
-        k = 0
-        while k < len(queue):
-            j = queue[k]
-            k += 1
-            if labels[j] == noise:
-                labels[j] = next_cluster
-                continue
-            if labels[j] != unclassified:
-                continue
-            labels[j] = next_cluster
-            j_neighbors = neighbors[j]
-            if len(j_neighbors) >= min_samples:
-                for m in j_neighbors:
-                    if m not in seen:
-                        seen.add(m)
-                        queue.append(m)
-        next_cluster += 1
-
-    grouped: dict[int, list[str]] = {}
-    for idx, lbl in enumerate(labels):
-        if lbl == noise:
-            continue
-        grouped.setdefault(lbl, []).append(ids[idx])
-    clusters = [sorted(members) for members in grouped.values()]
-    clusters.sort(key=lambda c: (-len(c), c[0] if c else ""))
-    return clusters
-
-
-def sort_along_axis(
-    widgets: list[dict[str, Any]],
-    *,
-    axis: str = "x",
-    origin: tuple[float, float] | None = None,
-) -> list[dict[str, Any]]:
-    """Return widgets ordered by their AABB-center projection along ``axis``.
-
-    Computes each widget's bounding-box center via ``_shape_to_rect`` so
-    the rotation-aware policy of the spatial module is respected, then
-    projects centers onto the axis vector. ``axis="x"`` and ``axis="y"``
-    project onto the canonical unit basis vectors; ``axis="diagonal"``
-    projects onto ``(1, 1) / sqrt(2)``. When ``origin`` is provided the
-    sort key is the absolute distance ``|(center - origin) · axis|`` so
-    callers can order widgets by proximity to an anchor along a
-    direction; widgets equidistant on opposite sides of the anchor tie
-    on projection and fall back to id ordering. When ``origin`` is
-    omitted the raw signed projection of the center is used so widgets
-    sort by their position along the axis. Empty input returns ``[]``.
-    Ties are broken by widget id so the output is deterministic across
-    runs.
-    """
-    if not widgets:
-        return []
-    if axis == "x":
-        ax, ay = 1.0, 0.0
-    elif axis == "y":
-        ax, ay = 0.0, 1.0
-    elif axis == "diagonal":
-        inv_sqrt2 = 1.0 / math.sqrt(2.0)
-        ax, ay = inv_sqrt2, inv_sqrt2
-    else:
-        raise ValueError(f"axis must be one of 'x', 'y', 'diagonal'; got {axis!r}")
-    ox, oy = (0.0, 0.0) if origin is None else (float(origin[0]), float(origin[1]))
-    use_abs = origin is not None
-
-    def _key(widget: dict[str, Any]) -> tuple[float, str]:
-        rect = _shape_to_rect(widget)
-        cx = rect["x"] + rect["w"] / 2.0
-        cy = rect["y"] + rect["h"] / 2.0
-        proj = (cx - ox) * ax + (cy - oy) * ay
-        if use_abs:
-            proj = abs(proj)
-        return (proj, str(widget.get("id", "")))
-
-    return sorted(widgets, key=_key)
-
-
-def shoelace_area(polygon: list[tuple[float, float]]) -> float:
-    """Return the absolute area of ``polygon`` via the shoelace formula.
-
-    ``polygon`` is a list of ``(x, y)`` vertices in either winding order;
-    the absolute value of the signed shoelace sum is returned so callers
-    do not need to know the orientation. Polygons with fewer than three
-    vertices have no area and return ``0.0``.
-    """
-    n = len(polygon)
-    if n < 3:
-        return 0.0
-    total = 0.0
-    for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        total += (x1 * y2) - (x2 * y1)
-    return abs(total) / 2.0
-
-
-def ray_cast_pip(
-    point: tuple[float, float], polygon: list[tuple[float, float]]
-) -> bool:
-    """Return ``True`` when ``point`` lies inside ``polygon``.
-
-    Uses the even-odd ray-casting algorithm: a horizontal ray from
-    ``point`` to ``+inf`` is intersected against each polygon edge and the
-    point is inside when the crossing count is odd. Edge-coincident points
-    are not specially handled and may classify either way; callers needing
-    boundary semantics should test against a small interior offset. Returns
-    ``False`` for degenerate polygons (fewer than three vertices).
-    """
-    n = len(polygon)
-    if n < 3:
-        return False
-    x, y = point
-    inside = False
-    j = n - 1
-    for i in range(n):
-        xi, yi = polygon[i]
-        xj, yj = polygon[j]
-        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
-            inside = not inside
-        j = i
-    return inside
-
-
-def build_arrow_graph(
-    widgets: list[dict[str, Any]],
-    arrows: list[dict[str, Any]],
-    *,
-    snap_radius: float = 24.0,
-) -> Any:
-    """Build a directed multigraph from ``arrows`` anchored to ``widgets``.
-
-    Non-arrow ``widgets`` become graph nodes keyed by widget id. Each arrow
-    has its ``(x1, y1)`` and ``(x2, y2)`` endpoints snapped to the nearest
-    widget AABB center within ``snap_radius`` (Euclidean pixels). Arrows
-    with both endpoints anchored produce an edge keyed by the arrow id
-    with the original arrow widget attached as the ``arrow_widget`` edge
-    attribute. Arrows missing either anchor (no widget center within the
-    radius, or malformed coordinates) are skipped and a warning is logged
-    via the module logger. Widgets and arrows are processed in
-    lexicographic id order so the resulting graph is deterministic across
-    runs. Returns a ``networkx.MultiDiGraph``.
-    """
-    import networkx as nx
-
-    graph = nx.MultiDiGraph()
-    sorted_widgets = sorted(widgets, key=lambda w: str(w.get("id", "")))
-    centers: list[tuple[str, float, float]] = []
-    for widget in sorted_widgets:
-        wid = str(widget.get("id", ""))
-        graph.add_node(wid)
-        rect = _shape_to_rect(widget)
-        cx = rect["x"] + rect["w"] / 2.0
-        cy = rect["y"] + rect["h"] / 2.0
-        centers.append((wid, cx, cy))
-
-    radius_sq = float(snap_radius) * float(snap_radius)
-
-    def _nearest(px: float, py: float) -> str | None:
-        best_id: str | None = None
-        best_d2 = radius_sq
-        for wid, cx, cy in centers:
-            dx = cx - px
-            dy = cy - py
-            d2 = dx * dx + dy * dy
-            if d2 <= best_d2:
-                if best_id is None or d2 < best_d2 or wid < best_id:
-                    best_id = wid
-                    best_d2 = d2
-        return best_id
-
-    for arrow in sorted(arrows, key=lambda a: str(a.get("id", ""))):
-        arrow_id = str(arrow.get("id", ""))
-        try:
-            sx = float(arrow["x1"])
-            sy = float(arrow["y1"])
-            ex = float(arrow["x2"])
-            ey = float(arrow["y2"])
-        except (KeyError, TypeError, ValueError):
-            LOGGER.warning("arrow %s has no anchor within snap_radius", arrow_id)
-            continue
-        src = _nearest(sx, sy)
-        dst = _nearest(ex, ey)
-        if src is None or dst is None:
-            LOGGER.warning("arrow %s has no anchor within snap_radius", arrow_id)
-            continue
-        graph.add_edge(src, dst, key=arrow_id, arrow_widget=arrow)
-    return graph
-
-
-def arrow_graph_summary(graph: Any) -> dict[str, Any]:
-    """Return a JSON-serializable summary of an arrow ``graph``.
-
-    Produces ``{"nodes": [...], "edges": [...], "stats": {...}}`` where
-    ``nodes`` is the lexicographically sorted list of node ids, ``edges``
-    is a list of ``{"id": arrow_id, "source": u, "target": v}`` records
-    sorted by ``id``, and ``stats`` reports ``node_count``, ``edge_count``,
-    and ``is_dag`` (``networkx.is_directed_acyclic_graph``). The result
-    contains only primitive types so ``json.dumps`` round-trips without
-    custom encoders.
-    """
-    import networkx as nx
-
-    nodes = sorted(str(n) for n in graph.nodes())
-    edges = sorted(
-        (
-            {"id": str(key), "source": str(u), "target": str(v)}
-            for u, v, key in graph.edges(keys=True)
-        ),
-        key=lambda record: record["id"],
-    )
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "stats": {
-            "node_count": graph.number_of_nodes(),
-            "edge_count": graph.number_of_edges(),
-            "is_dag": bool(nx.is_directed_acyclic_graph(graph)),
-        },
-    }
-
-
-# --- Layout / geometry primitives -----------------------------
-
-# Layout tuning constants. Defaults chosen to keep auto-laid stickies
-# legible at standard zoom and to leave a small visual gutter.
-_LAYOUT_DEFAULT_CELL_WIDTH = 168.0
-_LAYOUT_DEFAULT_CELL_HEIGHT = 168.0
-_LAYOUT_DEFAULT_GUTTER = 16.0
-_LAYOUT_DEFAULT_ORIGIN = (0.0, 0.0)
-_LAYOUT_HASH_PREFIX = "auto-layout-hash:"
-
-
-def _layout_canonical_widget(widget: dict[str, Any]) -> dict[str, Any]:
-    """Return the subset of ``widget`` that participates in layout-hash equality.
-
-    Geometry-only fields (``x``, ``y``, ``width``, ``height``) are excluded so
-    that re-running a layout on the same logical inputs produces a stable hash
-    even when prior runs assigned different coordinates.
-    """
-    if not isinstance(widget, dict):
-        return {}
-    keep = {
-        k: v for k, v in widget.items() if k not in {"x", "y", "width", "height", "id"}
-    }
-    return keep
-
-
-def _layout_hash(
-    *,
-    area_id: str,
-    layout: str,
-    widgets: list[dict[str, Any]],
-    params: dict[str, Any] | None = None,
-) -> str:
-    """Return a stable 12-char hex digest for a layout invocation.
-
-    The hash is computed over canonical-JSON of the (ordered) logical
-    widget contents plus ``area_id``, ``layout`` name, and ``params``. It
-    powers ``auto-layout-hash:<digest>`` reserved tags so repeated layout
-    runs are deduped client-side.
-    """
-    payload = {
-        "area_id": area_id,
-        "layout": layout,
-        "params": params or {},
-        "widgets": [_layout_canonical_widget(w) for w in widgets],
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:12]
-
-
-def _layout_envelope(widgets: list[dict[str, Any]]) -> dict[str, float]:
-    """Compute the bounding ``{x, y, width, height}`` for placed ``widgets``.
-
-    Widgets without geometry contribute ``(0, 0, 0, 0)``. Returns zeros for
-    an empty list. The envelope is exclusive of any area padding; callers
-    overlay it against the area capacity to detect overflow.
-    """
-    if not widgets:
-        return {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0}
-    xs: list[float] = []
-    ys: list[float] = []
-    rights: list[float] = []
-    bottoms: list[float] = []
-    for w in widgets:
-        x = float(w.get("x", 0.0) or 0.0)
-        y = float(w.get("y", 0.0) or 0.0)
-        ww = float(w.get("width", 0.0) or 0.0)
-        wh = float(w.get("height", 0.0) or 0.0)
-        xs.append(x)
-        ys.append(y)
-        rights.append(x + ww)
-        bottoms.append(y + wh)
-    min_x = min(xs)
-    min_y = min(ys)
-    return {
-        "x": min_x,
-        "y": min_y,
-        "width": max(rights) - min_x,
-        "height": max(bottoms) - min_y,
-    }
-
-
-def _area_capacity(area: dict[str, Any]) -> dict[str, float]:
-    """Return ``{width, height}`` capacity for an area record.
-
-    Looks first at ``width``/``height`` and falls back to
-    ``bounds.width``/``bounds.height``. Missing dimensions yield ``inf``
-    so the overflow check degrades to a no-op rather than spuriously
-    refusing layouts on partial area metadata.
-    """
-    bounds = area.get("bounds") if isinstance(area, dict) else None
-    width = area.get("width") if isinstance(area, dict) else None
-    height = area.get("height") if isinstance(area, dict) else None
-    if width is None and isinstance(bounds, dict):
-        width = bounds.get("width")
-    if height is None and isinstance(bounds, dict):
-        height = bounds.get("height")
-    return {
-        "width": float(width) if isinstance(width, (int, float)) else float("inf"),
-        "height": float(height) if isinstance(height, (int, float)) else float("inf"),
-    }
-
-
-def _area_overflow(
-    *,
-    area: dict[str, Any],
-    envelope: dict[str, float],
-) -> tuple[bool, dict[str, Any]]:
-    """Return ``(overflow, capacity)`` comparing the envelope to the area bounds."""
-    capacity = _area_capacity(area)
-    overflow = (
-        envelope["width"] > capacity["width"] or envelope["height"] > capacity["height"]
-    )
-    return overflow, capacity
-
-
-def _layout_grid(
-    widgets: list[dict[str, Any]],
-    *,
-    columns: int,
-    cell_width: float = _LAYOUT_DEFAULT_CELL_WIDTH,
-    cell_height: float = _LAYOUT_DEFAULT_CELL_HEIGHT,
-    gutter: float = _LAYOUT_DEFAULT_GUTTER,
-    origin: tuple[float, float] = _LAYOUT_DEFAULT_ORIGIN,
-) -> list[dict[str, Any]]:
-    """Place ``widgets`` in a row-major ``columns``-wide grid."""
-    if columns <= 0:
-        raise MuralValidationError("columns must be >= 1")
-    placed: list[dict[str, Any]] = []
-    ox, oy = origin
-    for idx, widget in enumerate(widgets):
-        col = idx % columns
-        row = idx // columns
-        new = dict(widget)
-        new["x"] = ox + col * (cell_width + gutter)
-        new["y"] = oy + row * (cell_height + gutter)
-        new.setdefault("width", cell_width)
-        new.setdefault("height", cell_height)
-        placed.append(new)
-    return placed
-
-
-def _layout_cluster(
-    widgets: list[dict[str, Any]],
-    *,
-    cell_width: float = _LAYOUT_DEFAULT_CELL_WIDTH,
-    cell_height: float = _LAYOUT_DEFAULT_CELL_HEIGHT,
-    gutter: float = _LAYOUT_DEFAULT_GUTTER,
-    origin: tuple[float, float] = _LAYOUT_DEFAULT_ORIGIN,
-) -> list[dict[str, Any]]:
-    """Place ``widgets`` in a near-square cluster (ceil(sqrt(N)) columns)."""
-    n = len(widgets)
-    if n == 0:
-        return []
-    columns = max(1, int(math.ceil(math.sqrt(n))))
-    return _layout_grid(
-        widgets,
-        columns=columns,
-        cell_width=cell_width,
-        cell_height=cell_height,
-        gutter=gutter,
-        origin=origin,
-    )
-
-
-def _layout_column(
-    widgets: list[dict[str, Any]],
-    *,
-    cell_width: float = _LAYOUT_DEFAULT_CELL_WIDTH,
-    cell_height: float = _LAYOUT_DEFAULT_CELL_HEIGHT,
-    gutter: float = _LAYOUT_DEFAULT_GUTTER,
-    origin: tuple[float, float] = _LAYOUT_DEFAULT_ORIGIN,
-) -> list[dict[str, Any]]:
-    """Stack ``widgets`` vertically in a single column."""
-    return _layout_grid(
-        widgets,
-        columns=1,
-        cell_width=cell_width,
-        cell_height=cell_height,
-        gutter=gutter,
-        origin=origin,
-    )
-
-
-def _layout_row(
-    widgets: list[dict[str, Any]],
-    *,
-    cell_width: float = _LAYOUT_DEFAULT_CELL_WIDTH,
-    cell_height: float = _LAYOUT_DEFAULT_CELL_HEIGHT,
-    gutter: float = _LAYOUT_DEFAULT_GUTTER,
-    origin: tuple[float, float] = _LAYOUT_DEFAULT_ORIGIN,
-) -> list[dict[str, Any]]:
-    """Lay ``widgets`` out horizontally in a single row."""
-    n = len(widgets)
-    return _layout_grid(
-        widgets,
-        columns=max(1, n),
-        cell_width=cell_width,
-        cell_height=cell_height,
-        gutter=gutter,
-        origin=origin,
-    )
-
-
-_LAYOUT_FUNCS: dict[str, Callable[..., list[dict[str, Any]]]] = {
-    "grid": _layout_grid,
-    "cluster": _layout_cluster,
-    "column": _layout_column,
-    "row": _layout_row,
-}
-
-
-def _existing_layout_hashes(mural_id: str, area_id: str | None) -> set[str]:
-    """Return ``auto-layout-hash:<digest>`` values already on widgets in ``area_id``.
-
-    Used by ``mural_widget_create_bulk`` to skip widgets whose layout hash
-    matches a prior run, so repeated invocations are idempotent client-side.
-    Returns an empty set when ``area_id`` is ``None``.
-    """
-    if not area_id:
-        return set()
-    digests: set[str] = set()
-    tag_lookup: dict[str, str] = {}
-    for tag in _paginate("GET", f"/murals/{mural_id}/tags"):
-        if not isinstance(tag, dict):
-            continue
-        text = tag.get("text") or ""
-        if isinstance(text, str) and text.startswith(_LAYOUT_HASH_PREFIX):
-            tag_id = tag.get("id")
-            if isinstance(tag_id, str):
-                tag_lookup[tag_id] = text[len(_LAYOUT_HASH_PREFIX) :]
-    if not tag_lookup:
-        return set()
-    for widget in _paginate("GET", f"/murals/{mural_id}/widgets"):
-        if not isinstance(widget, dict):
-            continue
-        if widget.get("areaId") != area_id and widget.get("area_id") != area_id:
-            continue
-        for tid in _widget_tag_ids(widget):
-            digest = tag_lookup.get(tid)
-            if digest is not None:
-                digests.add(digest)
-    return digests
-
-
-def _execute_layout(
-    *,
-    layout: str,
-    mural_id: str,
-    area_id: str,
-    widgets: list[dict[str, Any]],
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    """Run a layout function, validate against area capacity, and tag results.
-
-    Returns ``{computed_metadata, widgets, skipped, warnings}``. Refuses to
-    coerce when the computed envelope overflows the area bounds — raises
-    :class:`MuralAreaCapacityExceeded` so the caller surfaces the
-    structured ``AREA_CAPACITY_EXCEEDED`` envelope.
-    """
-    func = _LAYOUT_FUNCS.get(layout)
-    if func is None:
-        raise MuralValidationError(f"unknown layout {layout!r}")
-    placed = func(widgets, **params)
-    area = _get_area(mural_id, area_id)
-    envelope = _layout_envelope(placed)
-    overflow, capacity = _area_overflow(area=area, envelope=envelope)
-    if overflow:
-        raise MuralAreaCapacityExceeded(
-            area_id=area_id,
-            area_capacity=capacity,
-            computed_extent=envelope,
-            suggestion=(
-                "Reduce widget count, shrink cell dimensions, or place into "
-                "a larger area before re-running this layout."
-            ),
-        )
-    digest = _layout_hash(area_id=area_id, layout=layout, widgets=placed, params=params)
-    layout_tag_text = f"{_LAYOUT_HASH_PREFIX}{digest}"
-    for w in placed:
-        existing = list(w.get("tags") or [])
-        if layout_tag_text not in existing:
-            existing.append(layout_tag_text)
-        w["tags"] = existing
-        w["areaId"] = area_id
-    metadata = {
-        "layout": layout,
-        "area_id": area_id,
-        "envelope": envelope,
-        "capacity": capacity,
-        "hash": digest,
-        "count": len(placed),
-    }
-    return {
-        "computed_metadata": metadata,
-        "widgets": placed,
-        "skipped": [],
-        "warnings": [],
-    }
-
-
-# --- Session manifest (Phase 4.6 — Pattern C mitigation B) ---------------
-
-# Process-local intended-tag manifest. Keyed by ``(mural_id, widget_id)`` so
-# composite flows can re-assert intent after concurrent mutations from
-# other clients drift the server-side tag set. Strictly best-effort: never
-# blocks a primary mutation, never persisted to disk.
-_SessionManifest: dict[tuple[str, str], set[str]] = {}
-
-
-def _session_manifest_record(
-    mural_id: str, widget_id: str, intended: "Sequence[str]"
+# Carved into ``_geometry`` for testability and module size. Re-imported
+# here so the package surface (and ``mural.<symbol>`` test access) is
+# unchanged.
+
+from ._area_helpers import (  # noqa: E402,F401
+    _area_probe_impl,
+    _get_area_impl,
+    _get_area_with_widget_fallback_impl,
+    _get_widget_with_context_impl,
+    _list_areas_with_widget_fallback_impl,
+    _list_widgets_with_context_impl,
+    _log_area_fallback_once_impl,
+)
+from ._geometry import (  # noqa: E402,F401
+    Rect,
+    _area_probe_verdict,
+    _shape_to_rect,
+    arrow_graph_summary,
+    build_arrow_graph,
+    cluster_widgets,
+    pairwise_overlaps,
+    point_in_rect,
+    ray_cast_pip,
+    rect_contains_rect,
+    rect_intersection,
+    rects_overlap,
+    safe_rect,
+    shoelace_area,
+    sort_along_axis,
+    widget_center,
+    widgets_in_region,
+    widgets_in_shape,
+)
+from ._jsonrpc import (  # noqa: E402,F401
+    _MCP_CAPABILITIES,
+    _MCP_METHODS,
+    _MCP_PROTOCOL_FALLBACK,
+    _MCP_PROTOCOL_PREFERRED,
+    _MCP_SERVER_INFO,
+    _frame_mcp_message,
+    _mcp_error_response,
+    _mcp_handle_initialize,
+    _parse_mcp_frame,
+    _read_frame,
+)
+from ._layout import (  # noqa: E402,F401
+    _LAYOUT_DEFAULT_CELL_HEIGHT,
+    _LAYOUT_DEFAULT_CELL_WIDTH,
+    _LAYOUT_DEFAULT_GUTTER,
+    _LAYOUT_DEFAULT_ORIGIN,
+    _LAYOUT_FUNCS,
+    _LAYOUT_HASH_PREFIX,
+    _area_capacity,
+    _area_overflow,
+    _execute_layout,
+    _existing_layout_hashes,
+    _layout_canonical_widget,
+    _layout_cluster,
+    _layout_column,
+    _layout_envelope,
+    _layout_grid,
+    _layout_hash,
+    _layout_row,
+    _repair_tag_drift,
+    _session_manifest_record,
+    _SessionManifest,
+)
+from ._mcp_schema import (  # noqa: E402,F401
+    _validate_tool_input_schema,
+)
+from ._mcp_schema import (  # noqa: E402
+    _validate_tool_registry as _validate_tool_registry_impl,
+)
+from ._mcp_stdio import _run_mcp_stdio_impl  # noqa: E402,F401
+from ._mcp_tools import (  # noqa: E402,F401
+    _mcp_handle_tools_call_impl,
+    _mcp_list_tools_impl,
+    _mcp_tool_error_payload_impl,
+)
+from ._skill_doc_reconciliation import (  # noqa: E402,F401
+    _parse_skill_tool_table_impl,
+    _validate_skill_md_impl,
+)
+
+
+def _validate_tool_registry(
+    tool_registry: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """Record the intended tag set for ``(mural_id, widget_id)``."""
-    if not mural_id or not widget_id:
-        return
-    _SessionManifest[(mural_id, widget_id)] = {
-        t for t in intended if isinstance(t, str)
-    }
-
-
-def _repair_tag_drift(mural_id: str) -> list[dict[str, Any]]:
-    """Re-assert intended tags for every manifest entry in ``mural_id``.
-
-    Returns one ``{widget_id, repaired, warning}`` record per inspected
-    widget. Drift detected on a widget triggers a single ``_merge_tags``
-    call to restore the intended set; failures are recorded but do not
-    raise so the caller can keep sweeping.
-    """
-    repaired: list[dict[str, Any]] = []
-    keys = [k for k in _SessionManifest if k[0] == mural_id]
-    if not keys:
-        return repaired
-    tag_text_to_id = _ensure_tag_manifest(
-        mural_id,
-        [
-            {"text": t}
-            for t in sorted({t for k in keys for t in _SessionManifest.get(k, set())})
-        ],
+    _validate_tool_registry_impl(
+        _TOOL_REGISTRY if tool_registry is None else tool_registry
     )
-    for mid, widget_id in keys:
-        intended_text = _SessionManifest.get((mid, widget_id), set())
-        intended_ids = {tag_text_to_id[t] for t in intended_text if t in tag_text_to_id}
-        try:
-            widget = _authenticated_request("GET", f"/murals/{mid}/widgets/{widget_id}")
-        except MuralAPIError as exc:
-            repaired.append(
-                {"widget_id": widget_id, "repaired": False, "warning": str(exc)}
-            )
-            continue
-        observed_ids = set(_widget_tag_ids(widget))
-        missing = intended_ids - observed_ids
-        if not missing:
-            continue
-        try:
-            _merge_tags(
-                mid,
-                widget_id,
-                additions=sorted(missing),
-                removals=[],
-                max_retries=_TAG_MERGE_MAX_RETRIES,
-            )
-            repaired.append(
-                {
-                    "widget_id": widget_id,
-                    "repaired": True,
-                    "warning": "tag_drift_repaired",
-                }
-            )
-        except MuralError as exc:
-            repaired.append(
-                {"widget_id": widget_id, "repaired": False, "warning": str(exc)}
-            )
-    return repaired
 
 
 # --- Phase 4 composites: confirmation gate, find, sweep, summary, DT ------
@@ -5642,7 +3574,9 @@ def _confirmation_consume(*, tool: str, confirmed_id: str) -> dict[str, Any]:
             "confirmation_id_mismatch: no pending preview for this id"
         )
     if entry["expires_at"] < time.time():
-        raise MuralValidationError("confirmation_id_mismatch: preview expired")
+        raise MuralValidationError(
+            "confirmation_id_mismatch: preview expired"
+        )
     if entry["tool"] != tool:
         raise MuralValidationError(
             "confirmation_id_mismatch: tool name does not match preview"
@@ -6883,22 +4817,271 @@ def _patch_widget_or_disambiguate_404(
     return _authenticated_request("PATCH", discovered_path, json_body=body)
 
 
+def _resolve_widget_update_body(args: argparse.Namespace) -> dict[str, Any]:
+    """Load the patch body from inline ``--body`` or ``--body-file``.
+
+    Mutually exclusive: providing both is an operator error. Either flag may
+    be omitted entirely; the caller is responsible for ensuring the result
+    plus any other inputs (e.g. ``--hyperlink``) is non-empty.
+    """
+    inline = getattr(args, "body", None)
+    file_arg = getattr(args, "body_file", None)
+    if inline and file_arg:
+        raise MuralValidationError(
+            "provide either --body or --body-file, not both"
+        )
+    if file_arg:
+        body = _parse_json_arg(_load_payload_file(file_arg), "--body-file")
+    elif inline:
+        body = _parse_json_arg(inline, "--body")
+    else:
+        return {}
+    if not isinstance(body, dict):
+        raise MuralValidationError("widget update body must decode to a JSON object")
+    return body
+
+
+# Containment verdict vocabulary. ``parent_match``/``area_chain_match`` mean
+# the readback confirmed the expected parent but area geometry was not
+# available to evaluate; ``geometry_match`` is the strongest success and
+# means the widget's (x, y) is inside the parent area's (width, height).
+# ``geometry_mismatch`` is a hard failure: parent is correct but the widget
+# will render outside the parent's frame. Callers should treat any of the
+# three ``*_match`` values as containment success via
+# :func:`_is_containment_success`.
+CONTAINMENT_VERDICT_PARENT_MATCH = "parent_match"
+CONTAINMENT_VERDICT_AREA_CHAIN_MATCH = "area_chain_match"
+CONTAINMENT_VERDICT_GEOMETRY_MATCH = "geometry_match"
+CONTAINMENT_VERDICT_PARENT_MISMATCH = "parent_mismatch"
+CONTAINMENT_VERDICT_GEOMETRY_MISMATCH = "geometry_mismatch"
+CONTAINMENT_VERDICT_READBACK_FAILED = "readback_failed"
+CONTAINMENT_VERDICT_INCONCLUSIVE = "inconclusive"
+
+_CONTAINMENT_SUCCESS_VERDICTS = frozenset(
+    {
+        CONTAINMENT_VERDICT_PARENT_MATCH,
+        CONTAINMENT_VERDICT_AREA_CHAIN_MATCH,
+        CONTAINMENT_VERDICT_GEOMETRY_MATCH,
+    }
+)
+
+
+def _is_containment_success(verdict: str | None) -> bool:
+    """Return True when ``verdict`` represents a containment success."""
+    return verdict in _CONTAINMENT_SUCCESS_VERDICTS
+
+
+def _coerce_finite_number(value: Any) -> float | None:
+    """Return ``value`` as ``float`` when it is a finite real number."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        f = float(value)
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return f
+    return None
+
+
+def _parse_parent_id(value: str) -> str:
+    """argparse ``type=`` validator for ``--parent-id``.
+
+    Rejects empty or whitespace-only values so the Mural API never receives
+    a parentId of "" (which is silently ignored and produces an off-area
+    widget).
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise argparse.ArgumentTypeError(
+            "--parent-id must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _evaluate_containment_geometry(
+    widget: dict[str, Any],
+    area_chain: list[dict[str, Any]],
+    expected_parent_id: str,
+) -> tuple[str | None, str | None]:
+    """Compare widget (x, y) to the expected parent area's (width, height).
+
+    Returns ``(geometry_verdict, detail)`` where ``geometry_verdict`` is one
+    of ``geometry_match``, ``geometry_mismatch``, or ``None`` when geometry
+    could not be evaluated (missing or non-numeric coordinates/dimensions).
+    ``detail`` is a short human-readable string suitable for ``recommendation``
+    or ``None``.
+    """
+    expected_area: dict[str, Any] | None = None
+    for entry in area_chain:
+        if isinstance(entry, dict) and entry.get("id") == expected_parent_id:
+            expected_area = entry
+            break
+    if expected_area is None:
+        return None, None
+    width = _coerce_finite_number(expected_area.get("width"))
+    height = _coerce_finite_number(expected_area.get("height"))
+    if width is None or height is None:
+        return None, None
+    x = _coerce_finite_number(widget.get("x"))
+    y = _coerce_finite_number(widget.get("y"))
+    if x is None or y is None:
+        return None, None
+    if 0.0 <= x <= width and 0.0 <= y <= height:
+        return (
+            CONTAINMENT_VERDICT_GEOMETRY_MATCH,
+            (
+                f"widget (x={x}, y={y}) is inside parent area "
+                f"(width={width}, height={height})"
+            ),
+        )
+    return (
+        CONTAINMENT_VERDICT_GEOMETRY_MISMATCH,
+        (
+            f"widget (x={x}, y={y}) is outside parent area "
+            f"(width={width}, height={height}); parentId is correct but "
+            "the widget will render off-area — see geometry rules in "
+            "mural-seeding-patterns.instructions.md"
+        ),
+    )
+
+
+def _verify_parent_containment(
+    mural_id: str,
+    widget_id: str,
+    expected_parent_id: str,
+) -> dict[str, Any]:
+    """Read a widget back and verify it persists the expected parent area.
+
+    Returns a verdict dict with keys ``verdict`` (see
+    ``CONTAINMENT_VERDICT_*`` constants), ``expected_parent_id``,
+    ``persisted_parent_id``, ``area_chain_ids``, ``via`` (``parentId``,
+    ``areaChain``, or ``None``), and ``recommendation``. Pure of side
+    effects beyond a single widget GET plus area-chain walk.
+    """
+    try:
+        record = _authenticated_request(
+            "GET", f"/murals/{mural_id}/widgets/{widget_id}"
+        )
+    except MuralAPIError as exc:
+        return {
+            "verdict": CONTAINMENT_VERDICT_READBACK_FAILED,
+            "expected_parent_id": expected_parent_id,
+            "persisted_parent_id": None,
+            "area_chain_ids": [],
+            "via": None,
+            "recommendation": (
+                f"could not read widget {widget_id} back to verify "
+                f"containment: {exc}"
+            ),
+        }
+    inner = record.get("value") if isinstance(record, dict) else None
+    widget = inner if isinstance(inner, dict) else (
+        record if isinstance(record, dict) else {}
+    )
+    persisted_parent = widget.get("parentId")
+    area_chain = (
+        _walk_area_chain(mural_id, persisted_parent) if persisted_parent else []
+    )
+    chain_ids = [a.get("id") for a in area_chain if isinstance(a, dict)]
+    parent_match_via: str | None = None
+    if persisted_parent == expected_parent_id:
+        parent_match_via = "parentId"
+    elif expected_parent_id in chain_ids:
+        parent_match_via = "areaChain"
+    if parent_match_via is None:
+        return {
+            "verdict": CONTAINMENT_VERDICT_PARENT_MISMATCH,
+            "expected_parent_id": expected_parent_id,
+            "persisted_parent_id": persisted_parent,
+            "area_chain_ids": chain_ids,
+            "via": None,
+            "recommendation": (
+                f"persisted parentId {persisted_parent!r} and area chain "
+                f"{chain_ids} do not contain expected area "
+                f"{expected_parent_id!r}; the Mural API may have ignored "
+                "parentId for this widget type — see probe-before-bulk in "
+                "mural-seeding-patterns.instructions.md"
+            ),
+        }
+    geometry_verdict, geometry_detail = _evaluate_containment_geometry(
+        widget, area_chain, expected_parent_id
+    )
+    if geometry_verdict == CONTAINMENT_VERDICT_GEOMETRY_MATCH:
+        return {
+            "verdict": CONTAINMENT_VERDICT_GEOMETRY_MATCH,
+            "expected_parent_id": expected_parent_id,
+            "persisted_parent_id": persisted_parent,
+            "area_chain_ids": chain_ids,
+            "via": parent_match_via,
+            "recommendation": geometry_detail,
+        }
+    if geometry_verdict == CONTAINMENT_VERDICT_GEOMETRY_MISMATCH:
+        return {
+            "verdict": CONTAINMENT_VERDICT_GEOMETRY_MISMATCH,
+            "expected_parent_id": expected_parent_id,
+            "persisted_parent_id": persisted_parent,
+            "area_chain_ids": chain_ids,
+            "via": parent_match_via,
+            "recommendation": geometry_detail,
+        }
+    if parent_match_via == "parentId":
+        return {
+            "verdict": CONTAINMENT_VERDICT_PARENT_MATCH,
+            "expected_parent_id": expected_parent_id,
+            "persisted_parent_id": persisted_parent,
+            "area_chain_ids": chain_ids,
+            "via": "parentId",
+            "recommendation": (
+                "persisted parentId matches expected area; geometry not "
+                "evaluated (area width/height or widget x/y unavailable)"
+            ),
+        }
+    return {
+        "verdict": CONTAINMENT_VERDICT_AREA_CHAIN_MATCH,
+        "expected_parent_id": expected_parent_id,
+        "persisted_parent_id": persisted_parent,
+        "area_chain_ids": chain_ids,
+        "via": "areaChain",
+        "recommendation": (
+            "persisted parentId differs but expected area is in the area "
+            "chain; containment satisfied transitively (geometry not "
+            "evaluated)"
+        ),
+    }
+
+
+def _attach_containment_to_record(record: Any, verdict: dict[str, Any]) -> None:
+    """Attach a containment verdict to a create/update response in place."""
+    if not isinstance(record, dict):
+        return
+    inner = record.get("value")
+    target = inner if isinstance(inner, dict) else record
+    target["containment_verification"] = verdict
+
+
 def _cmd_widget_update(args: argparse.Namespace) -> int:
     mural_id = _validate_mural_id(args.mural)
-    body_arg = getattr(args, "body", None)
-    body: dict[str, Any] = _parse_json_arg(body_arg, "--body") if body_arg else {}
-    if not isinstance(body, dict):
-        raise MuralValidationError("--body must decode to a JSON object")
+    body = _resolve_widget_update_body(args)
     hyperlink = getattr(args, "hyperlink", None)
     if hyperlink is not None:
         body["hyperlink"] = _validate_hyperlink(hyperlink)
     if not body:
-        raise MuralValidationError("widget update requires --body or --hyperlink")
+        raise MuralValidationError(
+            "widget update requires --body, --body-file, or --hyperlink"
+        )
     if getattr(args, "require_author_tag", False) and not getattr(
         args, "force_human", False
     ):
         _assert_widget_has_author_tag(mural_id, args.widget)
     record = _patch_widget_or_disambiguate_404(mural_id, args.widget, body)
+    expected_parent = body.get("parentId") if isinstance(body, dict) else None
+    if isinstance(expected_parent, str) and expected_parent:
+        verdict = _verify_parent_containment(
+            mural_id, args.widget, expected_parent
+        )
+        _attach_containment_to_record(record, verdict)
+        if not _is_containment_success(verdict["verdict"]):
+            _emit_record(record, args)
+            return EXIT_FAILURE
     return _emit_record(record, args)
 
 
@@ -6916,6 +5099,17 @@ def _create_widget(
     _maybe_apply_author_tag(
         mural_id, record, skip=bool(getattr(args, "no_author_tag", False))
     )
+    expected_parent = getattr(args, "parent_id", None)
+    if expected_parent:
+        widget_id = _resolve_widget_id(record)
+        if widget_id:
+            verdict = _verify_parent_containment(
+                mural_id, widget_id, expected_parent
+            )
+            _attach_containment_to_record(record, verdict)
+            if not _is_containment_success(verdict["verdict"]):
+                _emit_record(record, args)
+                return EXIT_FAILURE
     return _emit_record(record, args)
 
 
@@ -7049,6 +5243,12 @@ def _cmd_area_create(args: argparse.Namespace) -> int:
     return _emit_record(record, args)
 
 
+def _cmd_area_probe(args: argparse.Namespace) -> int:
+    mural_id = _validate_mural_id(args.mural)
+    verdict = _area_probe(mural_id, args.area)
+    return _emit_record(verdict, args)
+
+
 _WIDGET_TYPE_TO_PATH: dict[str, str] = {
     "stickynote": "widgets/sticky-note",
     "textbox": "widgets/textbox",
@@ -7127,6 +5327,13 @@ def _build_bulk_widgets_payload(raw: Any) -> list[dict[str, Any]]:
             raise MuralValidationError(
                 f"bulk widgets[{index}].type must be a non-empty string"
             )
+        for key in ("parent_id", "parentId"):
+            if key in entry and entry[key] is not None:
+                pid = entry[key]
+                if not isinstance(pid, str) or not pid.strip():
+                    raise MuralValidationError(
+                        f"bulk widgets[{index}].{key} must be a non-empty string"
+                    )
         cleaned.append(entry)
     return cleaned
 
@@ -7181,7 +5388,28 @@ def _bulk_create_widgets(
         "failed": [],
         "warnings": [],
     }
-    for entry in to_send:
+    probe_index = next(
+        (
+            i
+            for i, entry in enumerate(to_send)
+            if isinstance(entry.get("parentId"), str) and entry["parentId"]
+        ),
+        None,
+    )
+    probe_outcome: dict[str, Any] | None = None
+    halt_parented = False
+    for index, entry in enumerate(to_send):
+        expected_parent_raw = entry.get("parentId") if isinstance(entry, dict) else None
+        has_parent = isinstance(expected_parent_raw, str) and bool(expected_parent_raw)
+        if halt_parented and has_parent:
+            skip_record: dict[str, Any] = {
+                "reason": "probe_failed",
+                "item": entry,
+            }
+            if probe_outcome is not None:
+                skip_record["probe"] = probe_outcome
+            summary["skipped"].append(skip_record)
+            continue
         widget_type = entry.get("type")
         normalized = (
             widget_type.strip()
@@ -7203,6 +5431,13 @@ def _bulk_create_widgets(
             )
             if atomic:
                 raise MuralBulkAtomicAbort(summary)
+            if index == probe_index:
+                probe_outcome = {
+                    "index": index,
+                    "reason": "unsupported_widget_type",
+                }
+                summary["probe"] = probe_outcome
+                halt_parented = True
             continue
         body = {k: v for k, v in entry.items() if k != "type"}
         try:
@@ -7213,16 +5448,63 @@ def _bulk_create_widgets(
             )
         except MuralError as exc:
             summary["failed"].append({"item": entry, "error": str(exc)})
+            if index == probe_index:
+                probe_outcome = {
+                    "index": index,
+                    "reason": "post_failed",
+                    "error": str(exc),
+                }
+                summary["probe"] = probe_outcome
+                halt_parented = True
             if atomic:
                 raise MuralBulkAtomicAbort(summary) from exc
             continue
         created = _extract_bulk_create_succeeded(response)
         if created:
+            probe_verdict_value: str | None = None
+            probe_widget_id: str | None = None
+            if has_parent:
+                expected_parent = expected_parent_raw
+                for created_widget in created:
+                    widget_id = _resolve_widget_id(created_widget)
+                    if not widget_id:
+                        continue
+                    verdict = _verify_parent_containment(
+                        mural_id, widget_id, expected_parent
+                    )
+                    _attach_containment_to_record(created_widget, verdict)
+                    success = _is_containment_success(verdict["verdict"])
+                    if not success:
+                        summary["warnings"].append(
+                            f"containment verification failed for widget "
+                            f"{widget_id}: {verdict['recommendation']}"
+                        )
+                    if probe_verdict_value is None:
+                        probe_verdict_value = verdict["verdict"]
+                        probe_widget_id = widget_id
             summary["succeeded"].extend(created)
+            if index == probe_index and probe_verdict_value is not None:
+                probe_outcome = {
+                    "index": index,
+                    "widget_id": probe_widget_id,
+                    "verdict": probe_verdict_value,
+                }
+                summary["probe"] = probe_outcome
+                if not _is_containment_success(probe_verdict_value):
+                    halt_parented = True
+                    if atomic:
+                        raise MuralBulkAtomicAbort(summary)
         else:
             summary["failed"].append(
                 {"item": entry, "error": "empty response from create"}
             )
+            if index == probe_index:
+                probe_outcome = {
+                    "index": index,
+                    "reason": "empty_response",
+                }
+                summary["probe"] = probe_outcome
+                halt_parented = True
             if atomic:
                 raise MuralBulkAtomicAbort(summary)
     return summary
@@ -8301,193 +6583,6 @@ def _cmd_mcp(_args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-_MCP_PROTOCOL_PREFERRED = "2025-11-25"
-_MCP_PROTOCOL_FALLBACK = "2025-06-18"
-_MCP_SERVER_INFO = {"name": "mural", "version": "1.0.0"}
-_MCP_CAPABILITIES: dict[str, Any] = {"tools": {"listChanged": False}}
-_MCP_METHODS: frozenset[str] = frozenset(
-    {
-        "initialize",
-        "notifications/initialized",
-        "tools/list",
-        "tools/call",
-    }
-)
-
-
-def _frame_mcp_message(obj: dict[str, Any]) -> bytes:
-    """Encode ``obj`` as a single newline-delimited JSON frame."""
-    return (json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
-        "utf-8"
-    )
-
-
-def _parse_mcp_frame(line: bytes) -> dict[str, Any] | None:
-    """Decode one NDJSON line into a JSON-RPC message; ``None`` for blank lines."""
-    try:
-        text = line.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise MCPProtocolError(f"frame is not valid utf-8: {exc}") from exc
-    text = text.strip()
-    if not text:
-        return None
-    try:
-        msg = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise MCPProtocolError(f"invalid json frame: {exc}") from exc
-    if not isinstance(msg, dict):
-        raise MCPProtocolError("frame must be a JSON object")
-    return msg
-
-
-def _read_frame(stream: Any, limit: int = MURAL_MAX_FRAME_BYTES) -> bytes | None:
-    """Read one NDJSON frame from ``stream`` enforcing ``limit`` bytes.
-
-    Returns the raw line including its trailing newline, an empty bytes
-    object on EOF (so callers can mirror the existing ``readline()`` EOF
-    semantics), or raises ``FrameTooLarge`` if the frame exceeds ``limit``.
-    Reads in fixed-size chunks via ``readline`` so a hostile producer cannot
-    pin the entire process on a single oversized line.
-    """
-    chunk_size = 65536
-    pieces: list[bytes] = []
-    total = 0
-    while True:
-        chunk = stream.readline(chunk_size)
-        if not chunk:
-            break
-        pieces.append(chunk)
-        total += len(chunk)
-        if total > limit:
-            # Drain the rest of the offending line so the next read starts
-            # cleanly on the next frame boundary, then reject.
-            while not chunk.endswith(b"\n"):
-                chunk = stream.readline(chunk_size)
-                if not chunk:
-                    break
-            raise FrameTooLarge(f"mcp frame exceeds {limit} bytes")
-        if chunk.endswith(b"\n"):
-            break
-    if not pieces:
-        return b""
-    return b"".join(pieces)
-
-
-_JSON_TYPE_NAMES = ("string", "integer", "number", "boolean", "array", "object", "null")
-
-
-def _matches_json_type(value: Any, allowed: tuple[str, ...]) -> bool:
-    for name in allowed:
-        if name == "null":
-            if value is None:
-                return True
-        elif name == "boolean":
-            if isinstance(value, bool):
-                return True
-        elif name == "integer":
-            if isinstance(value, int) and not isinstance(value, bool):
-                return True
-        elif name == "number":
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return True
-        elif name == "string":
-            if isinstance(value, str):
-                return True
-        elif name == "array":
-            if isinstance(value, list):
-                return True
-        elif name == "object":
-            if isinstance(value, dict):
-                return True
-    return False
-
-
-def _validate_tool_input_schema(
-    schema: dict[str, Any], value: Any, path: str = "$"
-) -> None:
-    """Minimal JSON Schema validator covering the subset used by tool registry.
-
-    Raises :class:`MCPInvalidParamsError` on the first violation.
-    """
-    if "type" in schema:
-        types = schema["type"]
-        if isinstance(types, str):
-            allowed = (types,)
-        elif isinstance(types, list):
-            allowed = tuple(types)
-        else:
-            raise MCPInvalidParamsError(
-                f"{path}: schema 'type' must be string or list, "
-                f"got {type(types).__name__}",
-                path=path,
-            )
-        if not _matches_json_type(value, allowed):
-            raise MCPInvalidParamsError(
-                f"{path}: expected type {list(allowed)}, got {type(value).__name__}",
-                path=path,
-            )
-    if "enum" in schema and value not in schema["enum"]:
-        raise MCPInvalidParamsError(
-            f"{path}: value not in enum {schema['enum']!r}", path=path
-        )
-    if isinstance(value, str):
-        if "minLength" in schema and len(value) < schema["minLength"]:
-            raise MCPInvalidParamsError(
-                f"{path}: string shorter than minLength {schema['minLength']}",
-                path=path,
-            )
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
-            raise MCPInvalidParamsError(
-                f"{path}: string longer than maxLength {schema['maxLength']}",
-                path=path,
-            )
-        if "pattern" in schema and not re.search(schema["pattern"], value):
-            raise MCPInvalidParamsError(
-                f"{path}: string does not match pattern {schema['pattern']!r}",
-                path=path,
-            )
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in schema and value < schema["minimum"]:
-            raise MCPInvalidParamsError(
-                f"{path}: value less than minimum {schema['minimum']}", path=path
-            )
-        if "maximum" in schema and value > schema["maximum"]:
-            raise MCPInvalidParamsError(
-                f"{path}: value greater than maximum {schema['maximum']}", path=path
-            )
-    if isinstance(value, list):
-        if "minItems" in schema and len(value) < schema["minItems"]:
-            raise MCPInvalidParamsError(
-                f"{path}: array shorter than minItems {schema['minItems']}", path=path
-            )
-        if "maxItems" in schema and len(value) > schema["maxItems"]:
-            raise MCPInvalidParamsError(
-                f"{path}: array longer than maxItems {schema['maxItems']}", path=path
-            )
-        item_schema = schema.get("items")
-        if isinstance(item_schema, dict):
-            for index, item in enumerate(value):
-                _validate_tool_input_schema(item_schema, item, f"{path}[{index}]")
-    if isinstance(value, dict):
-        properties = schema.get("properties") or {}
-        required = schema.get("required") or []
-        for key in required:
-            if key not in value:
-                raise MCPInvalidParamsError(
-                    f"{path}: missing required property {key!r}",
-                    path=f"{path}.{key}",
-                )
-        additional = schema.get("additionalProperties", True)
-        for key, sub in value.items():
-            if key in properties:
-                _validate_tool_input_schema(properties[key], sub, f"{path}.{key}")
-            elif additional is False:
-                raise MCPInvalidParamsError(
-                    f"{path}: unexpected property {key!r}",
-                    path=f"{path}.{key}",
-                )
-
-
 # --- Tool handlers --------------------------------------------------------
 #
 # Each handler receives the validated MCP ``arguments`` dict and returns a
@@ -8772,6 +6867,11 @@ def _tool_area_create(arguments: dict[str, Any]) -> Any:
         if isinstance(area_id, str):
             _area_cache[area_id] = record
     return record
+
+
+def _tool_area_probe(arguments: dict[str, Any]) -> Any:
+    mural_id = _validate_mural_id(arguments["mural"])
+    return _area_probe(mural_id, arguments["area"])
 
 
 def _tool_widget_get_with_context(arguments: dict[str, Any]) -> Any:
@@ -9533,6 +7633,7 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "height": {"type": "number"},
                 "style": {"type": "object"},
                 "hyperlink": _HYPERLINK_PROPERTY,
+                "parent_id": {"type": "string", "minLength": 1},
                 "no_author_tag": _NO_AUTHOR_TAG_PROPERTY,
                 "dry_run": _DRY_RUN_PROPERTY,
                 "idempotency_key": _IDEMPOTENCY_KEY_PROPERTY,
@@ -9564,6 +7665,7 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "height": {"type": "number"},
                 "style": {"type": "object"},
                 "hyperlink": _HYPERLINK_PROPERTY,
+                "parent_id": {"type": "string", "minLength": 1},
                 "no_author_tag": _NO_AUTHOR_TAG_PROPERTY,
                 "dry_run": _DRY_RUN_PROPERTY,
                 "idempotency_key": _IDEMPOTENCY_KEY_PROPERTY,
@@ -9596,6 +7698,7 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "text": {"type": "string"},
                 "style": {"type": "object"},
                 "hyperlink": _HYPERLINK_PROPERTY,
+                "parent_id": {"type": "string", "minLength": 1},
                 "no_author_tag": _NO_AUTHOR_TAG_PROPERTY,
                 "dry_run": _DRY_RUN_PROPERTY,
                 "idempotency_key": _IDEMPOTENCY_KEY_PROPERTY,
@@ -9626,6 +7729,7 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "y2": _WIDGET_XY_PROPERTY,
                 "style": {"type": "object"},
                 "hyperlink": _HYPERLINK_PROPERTY,
+                "parent_id": {"type": "string", "minLength": 1},
                 "no_author_tag": _NO_AUTHOR_TAG_PROPERTY,
                 "dry_run": _DRY_RUN_PROPERTY,
                 "idempotency_key": _IDEMPOTENCY_KEY_PROPERTY,
@@ -9665,6 +7769,7 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
                 "height": {"type": "number"},
                 "title": {"type": "string"},
                 "hyperlink": _HYPERLINK_PROPERTY,
+                "parent_id": {"type": "string", "minLength": 1},
                 "no_author_tag": _NO_AUTHOR_TAG_PROPERTY,
                 "dry_run": _DRY_RUN_PROPERTY,
                 "idempotency_key": _IDEMPOTENCY_KEY_PROPERTY,
@@ -9840,6 +7945,37 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "destructive": True,
         "creates": True,
         "annotations": {"destructiveHint": True, "idempotentHint": True},
+    },
+    "mural_area_probe": {
+        "title": "Probe area z-order visibility",
+        "description": (
+            "Create a disposable probe sticky in an area, check z-order and "
+            "parent binding, then delete the probe.\n\n"
+            "Returns a verdict: `ok` (safe to seed), `unbound` (widget not "
+            "bound to any area), `parent_mismatch` (area chain unexpected), "
+            "or `occluded` (probe bounding box fully contained within a "
+            "sibling, indicating potential z-order hiding).\n\n"
+            "`occluded` is a hard stop: the Mural REST API exposes no "
+            "canvas z-order operation, so it must be resolved manually by "
+            "an operator in the Mural UI ('Send to Back' / 'Bring to "
+            "Front', or anchor restructure). Surface the verdict and the "
+            "`siblings_above` ids to the operator and pause the workflow. "
+            "Do not re-run the probe, destroy and recreate the widget, or "
+            "hand-tune (x, y) offsets — see the Z-Order Visibility section "
+            "of mural-seeding-patterns.instructions.md."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mural": {"type": "string", "minLength": 1},
+                "area": {"type": "string", "minLength": 1},
+            },
+            "required": ["mural", "area"],
+            "additionalProperties": False,
+        },
+        "handler": _tool_area_probe,
+        "destructive": True,
+        "annotations": {"destructiveHint": True},
     },
     "mural_widget_get_with_context": {
         "title": "Get widget with context",
@@ -10960,335 +9096,41 @@ _TOOL_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 
-def _validate_tool_registry() -> None:
-    """Validate every entry in :data:`_TOOL_REGISTRY` at module load time.
-
-    Each entry must declare a non-empty ``title``, a structured
-    ``"summary\\n\\ndetails"`` ``description`` (single-line summary ≤120
-    chars, blank-line separator, non-empty details), an ``input_schema``
-    that is an object with ``additionalProperties: False`` and (when
-    present) ``required`` referencing only declared properties, a
-    callable ``handler``, and a dict ``annotations`` mapping. Raises
-    :class:`RuntimeError` on the first violation so packaging surfaces
-    the error immediately.
-    """
-    for name, entry in _TOOL_REGISTRY.items():
-        title = entry.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].title must be a non-empty string"
-            )
-        desc = entry.get("description")
-        if not isinstance(desc, str) or not desc:
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].description must be a non-empty string"
-            )
-        parts = desc.split("\n\n", 1)
-        if len(parts) != 2:
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].description must contain a blank-line "
-                "separator between summary and details"
-            )
-        summary, details = parts
-        if not summary or "\n" in summary:
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].description summary must be a single "
-                "non-empty line"
-            )
-        if len(summary) > 120:
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].description summary exceeds 120 chars "
-                f"({len(summary)})"
-            )
-        if not details.strip():
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].description details must be non-empty"
-            )
-        schema = entry.get("input_schema")
-        if not isinstance(schema, dict):
-            raise RuntimeError(f"_TOOL_REGISTRY[{name!r}].input_schema must be a dict")
-        if schema.get("type") != "object":
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].input_schema.type must be 'object'"
-            )
-        if schema.get("additionalProperties") is not False:
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].input_schema.additionalProperties "
-                "must be False"
-            )
-        properties = schema.get("properties", {})
-        if not isinstance(properties, dict):
-            raise RuntimeError(
-                f"_TOOL_REGISTRY[{name!r}].input_schema.properties must be a dict"
-            )
-        required = schema.get("required")
-        if required is not None:
-            if not isinstance(required, list) or not all(
-                isinstance(r, str) for r in required
-            ):
-                raise RuntimeError(
-                    f"_TOOL_REGISTRY[{name!r}].input_schema.required must be a "
-                    "list of strings"
-                )
-            unknown = [r for r in required if r not in properties]
-            if unknown:
-                raise RuntimeError(
-                    f"_TOOL_REGISTRY[{name!r}].input_schema.required references "
-                    f"undeclared properties: {unknown}"
-                )
-        if not callable(entry.get("handler")):
-            raise RuntimeError(f"_TOOL_REGISTRY[{name!r}].handler must be callable")
-        if not isinstance(entry.get("annotations"), dict):
-            raise RuntimeError(f"_TOOL_REGISTRY[{name!r}].annotations must be a dict")
-
-
-_validate_tool_registry()
+_validate_tool_registry(_TOOL_REGISTRY)
 
 
 # --- SKILL.md ↔ _TOOL_REGISTRY reconciliation ----------------------------
 
-_SKILL_TOOL_TABLE_HEADER_RE = re.compile(
-    r"^\|\s*Tool\s*\|\s*Operation\s*\|\s*Description\s*\|\s*$",
-    re.IGNORECASE,
-)
-
 
 def _parse_skill_tool_table(text: str) -> list[dict[str, str]]:
-    """Parse the ``MCP Tool Reference`` markdown table from SKILL.md text.
-
-    Returns one ``{"name", "operation", "description"}`` mapping per data row.
-    The tool name is stripped of surrounding backticks. Returns an empty list
-    when the expected header is not found.
-    """
-    rows: list[dict[str, str]] = []
-    lines = text.splitlines()
-    header_idx: int | None = None
-    for idx, line in enumerate(lines):
-        if _SKILL_TOOL_TABLE_HEADER_RE.match(line):
-            header_idx = idx
-            break
-    if header_idx is None:
-        return rows
-    # Skip the header separator row (e.g. ``|----|----|----|``).
-    for line in lines[header_idx + 2 :]:
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            break
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if len(cells) < 3:
-            continue
-        name = cells[0].strip("`").strip()
-        if not name.startswith("mural_"):
-            break
-        rows.append(
-            {
-                "name": name,
-                "operation": cells[1].lower(),
-                "description": cells[2],
-            }
-        )
-    return rows
+    return _parse_skill_tool_table_impl(text)
 
 
 def _validate_skill_md(path: pathlib.Path) -> list[str]:
-    """Compare the SKILL.md tool table at ``path`` against ``_TOOL_REGISTRY``.
-
-    Returns a list of human-readable diff strings. An empty list means the
-    documented surface and the in-process registry agree on tool names and
-    operation classification (``read`` vs ``write``). Description prose is
-    intentionally not compared because the SKILL.md table uses concise
-    user-facing phrasing while ``_TOOL_REGISTRY`` carries longer MCP-style
-    descriptions.
-    """
-    diffs: list[str] = []
-    text = path.read_text(encoding="utf-8")
-    documented = {row["name"]: row for row in _parse_skill_tool_table(text)}
-    if not documented:
-        diffs.append(f"SKILL.md at {path}: MCP tool reference table not found")
-        return diffs
-    registered = set(_TOOL_REGISTRY.keys())
-    documented_names = set(documented.keys())
-    for missing in sorted(registered - documented_names):
-        diffs.append(f"missing in SKILL.md: {missing}")
-    for extra in sorted(documented_names - registered):
-        diffs.append(f"extra in SKILL.md (not in _TOOL_REGISTRY): {extra}")
-    for name in sorted(registered & documented_names):
-        annotations = _TOOL_REGISTRY[name].get("annotations", {})
-        expected_op = "read" if annotations.get("readOnlyHint") else "write"
-        actual_op = documented[name]["operation"]
-        if actual_op != expected_op:
-            diffs.append(
-                f"operation mismatch for {name}: SKILL.md={actual_op!r} "
-                f"registry={expected_op!r}"
-            )
-    return diffs
+    return _validate_skill_md_impl(path, tool_registry=_TOOL_REGISTRY)
 
 
 # --- JSON-RPC dispatch ----------------------------------------------------
 
 
-def _mcp_error_response(
-    msg_id: Any,
-    code: int,
-    message: str,
-    data: Any = None,
-) -> dict[str, Any]:
-    err: dict[str, Any] = {"code": code, "message": message}
-    if data is not None:
-        err["data"] = data
-    return {"jsonrpc": "2.0", "id": msg_id, "error": err}
-
-
-def _mcp_handle_initialize(params: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(params, dict):
-        raise MCPInvalidParamsError("params must be an object")
-    requested = params.get("protocolVersion")
-    if requested == _MCP_PROTOCOL_PREFERRED:
-        chosen = _MCP_PROTOCOL_PREFERRED
-    elif requested == _MCP_PROTOCOL_FALLBACK or requested is None:
-        chosen = _MCP_PROTOCOL_FALLBACK
-    else:
-        raise MCPInvalidParamsError(
-            f"unsupported protocolVersion {requested!r}",
-            path="$.protocolVersion",
-        )
-    caps = params.get("capabilities")
-    _CLIENT_CAPABILITIES.clear()
-    if isinstance(caps, dict):
-        _CLIENT_CAPABILITIES.update(caps)
-    return {
-        "protocolVersion": chosen,
-        "capabilities": _MCP_CAPABILITIES,
-        "serverInfo": _MCP_SERVER_INFO,
-    }
-
-
 def _mcp_list_tools() -> list[dict[str, Any]]:
-    tools: list[dict[str, Any]] = []
-    for name, spec in _TOOL_REGISTRY.items():
-        entry: dict[str, Any] = {
-            "name": name,
-            "title": spec["title"],
-            "description": spec["description"],
-            "inputSchema": spec["input_schema"],
-        }
-        annotations = spec.get("annotations")
-        if annotations:
-            entry["annotations"] = annotations
-        tools.append(entry)
-    return tools
+    return _mcp_list_tools_impl(_TOOL_REGISTRY)
 
 
 def _mcp_tool_error_payload(exc: Exception) -> dict[str, Any]:
-    if isinstance(exc, MuralAPIError):
-        return {
-            "error": exc.code,
-            "message": exc.message,
-            "request_id": exc.request_id,
-            "status": exc.status,
-        }
-    if isinstance(exc, MuralAmbiguousWorkspaceError):
-        return {
-            "error": "ambiguous_workspace",
-            "message": str(exc),
-            "workspace_ids": list(exc.workspace_ids),
-        }
-    if isinstance(exc, MuralAuthScopeError):
-        return {
-            "error": "auth_scope_required",
-            "message": str(exc),
-            "required_scope": exc.scope,
-            "granted_scopes": list(exc.granted),
-        }
-    if isinstance(exc, MuralSecurityError):
-        return {"error": "security_error", "message": str(exc)}
-    return {"error": "validation_error", "message": str(exc)}
+    return _mcp_tool_error_payload_impl(exc)
 
 
 def _mcp_handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(params, dict):
-        raise MCPInvalidParamsError("params must be an object")
-    name = params.get("name")
-    if not isinstance(name, str) or not name:
-        raise MCPInvalidParamsError("name is required", path="$.name")
-    spec = _TOOL_REGISTRY.get(name)
-    if spec is None:
-        raise MCPInvalidParamsError(f"unknown tool {name!r}", path="$.name")
-    arguments = params.get("arguments") or {}
-    if not isinstance(arguments, dict):
-        raise MCPInvalidParamsError("arguments must be an object", path="$.arguments")
-    _validate_tool_input_schema(spec["input_schema"], arguments, "$.arguments")
-    dry_run = bool(arguments.pop("dry_run", False))
-    idempotency_key = arguments.pop("idempotency_key", None)
-    is_destructive = bool(spec.get("destructive"))
-    creates = bool(spec.get("creates"))
-    if dry_run and is_destructive:
-        preview = {
-            "dry_run": True,
-            "tool": name,
-            "arguments": dict(arguments),
-        }
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(preview, ensure_ascii=False, sort_keys=True),
-                }
-            ],
-            "isError": False,
-        }
-    if is_destructive:
-        required_scopes = spec.get("required_scopes") or ["murals:write"]
-        try:
-            _require_scope(required_scopes)
-        except MuralAuthScopeError as exc:
-            payload = _mcp_tool_error_payload(exc)
-            return {
-                "content": [
-                    {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
-                ],
-                "isError": True,
-            }
-    if creates and isinstance(idempotency_key, str) and idempotency_key:
-        cached = _idempotency_get(name, idempotency_key)
-        if cached is not None:
-            return cached
-    if is_destructive and not _maybe_elicit(name, arguments):
-        payload = {
-            "error": "elicitation_declined",
-            "message": "user declined elicitation for destructive tool",
-            "tool": name,
-        }
-        return {
-            "content": [
-                {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
-            ],
-            "isError": True,
-        }
-    try:
-        result = spec["handler"](arguments)
-    except (
-        MuralAPIError,
-        MuralSecurityError,
-        MuralAmbiguousWorkspaceError,
-        MuralAuthScopeError,
-        MuralValidationError,
-    ) as exc:
-        payload = _mcp_tool_error_payload(exc)
-        return {
-            "content": [
-                {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
-            ],
-            "isError": True,
-        }
-    text = json.dumps(result, default=str, ensure_ascii=False)
-    response = {
-        "content": [{"type": "text", "text": text}],
-        "isError": False,
-    }
-    if creates and isinstance(idempotency_key, str) and idempotency_key:
-        _idempotency_put(name, idempotency_key, response)
-    return response
+    return _mcp_handle_tools_call_impl(
+        params,
+        tool_registry=_TOOL_REGISTRY,
+        validate_tool_input_schema=_validate_tool_input_schema,
+        require_scope=_require_scope,
+        idempotency_get=_idempotency_get,
+        maybe_elicit=_maybe_elicit,
+        idempotency_put=_idempotency_put,
+    )
 
 
 def _run_mcp_stdio(
@@ -11316,145 +9158,24 @@ def _run_mcp_stdio(
         stdin = sys.stdin.buffer
     if stdout is None:
         stdout = sys.stdout.buffer
-    executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="mural-mcp-tool"
+    return _run_mcp_stdio_impl(
+        stdin,
+        stdout,
+        read_frame=_read_frame,
+        frame_mcp_message=_frame_mcp_message,
+        mcp_error_response=_mcp_error_response,
+        emit=_emit,
+        redact=_redact,
+        parse_mcp_frame=_parse_mcp_frame,
+        mcp_methods=_MCP_METHODS,
+        mcp_handle_initialize=_mcp_handle_initialize,
+        client_capabilities=_CLIENT_CAPABILITIES,
+        mcp_list_tools=_mcp_list_tools,
+        mcp_handle_tools_call=_mcp_handle_tools_call,
+        tool_timeout_secs=MURAL_TOOL_TIMEOUT_SECS,
+        exit_success=EXIT_SUCCESS,
+        exit_failure=EXIT_FAILURE,
     )
-    try:
-        while True:
-            try:
-                line = _read_frame(stdin)
-            except FrameTooLarge as exc:
-                stdout.write(
-                    _frame_mcp_message(_mcp_error_response(None, -32600, str(exc)))
-                )
-                stdout.flush()
-                continue
-            except OSError as exc:
-                _emit(
-                    f"mcp stdio read failed: {_redact(str(exc))}",
-                    level=logging.ERROR,
-                )
-                return EXIT_FAILURE
-            if not line:
-                return EXIT_SUCCESS
-            try:
-                msg = _parse_mcp_frame(line)
-            except MCPProtocolError as exc:
-                stdout.write(
-                    _frame_mcp_message(_mcp_error_response(None, -32700, str(exc)))
-                )
-                stdout.flush()
-                continue
-            if msg is None:
-                continue
-            method = msg.get("method")
-            msg_id = msg.get("id")
-            params = msg.get("params") or {}
-            is_notification = "id" not in msg
-            # DR-12: full-set membership check before any branching.
-            is_known = method in _MCP_METHODS
-            if not is_known:
-                if not is_notification:
-                    stdout.write(
-                        _frame_mcp_message(
-                            _mcp_error_response(
-                                msg_id, -32601, f"unknown method: {method!r}"
-                            )
-                        )
-                    )
-                    stdout.flush()
-                continue
-            try:
-                if method == "initialize":
-                    if is_notification:
-                        continue
-                    result = _mcp_handle_initialize(params)
-                    stdout.write(
-                        _frame_mcp_message(
-                            {"jsonrpc": "2.0", "id": msg_id, "result": result}
-                        )
-                    )
-                    stdout.flush()
-                    continue
-                if method == "notifications/initialized":
-                    continue
-                if method == "tools/list":
-                    if is_notification:
-                        continue
-                    stdout.write(
-                        _frame_mcp_message(
-                            {
-                                "jsonrpc": "2.0",
-                                "id": msg_id,
-                                "result": {"tools": _mcp_list_tools()},
-                            }
-                        )
-                    )
-                    stdout.flush()
-                    continue
-                if method == "tools/call":
-                    if is_notification:
-                        continue
-                    tool_name = params.get("name") if isinstance(params, dict) else None
-                    future = executor.submit(_mcp_handle_tools_call, params)
-                    try:
-                        result = future.result(timeout=MURAL_TOOL_TIMEOUT_SECS)
-                    except concurrent.futures.TimeoutError:
-                        future.cancel()
-                        stdout.write(
-                            _frame_mcp_message(
-                                _mcp_error_response(
-                                    msg_id,
-                                    -32000,
-                                    "tool_timeout",
-                                    data={
-                                        "tool": tool_name,
-                                        "timeout_secs": MURAL_TOOL_TIMEOUT_SECS,
-                                    },
-                                )
-                            )
-                        )
-                        stdout.flush()
-                        continue
-                    stdout.write(
-                        _frame_mcp_message(
-                            {"jsonrpc": "2.0", "id": msg_id, "result": result}
-                        )
-                    )
-                    stdout.flush()
-                    continue
-            except MCPInvalidParamsError as exc:
-                if not is_notification:
-                    stdout.write(
-                        _frame_mcp_message(
-                            _mcp_error_response(
-                                msg_id, -32602, exc.message, data={"path": exc.path}
-                            )
-                        )
-                    )
-                    stdout.flush()
-            except MCPProtocolError as exc:
-                if not is_notification:
-                    stdout.write(
-                        _frame_mcp_message(
-                            _mcp_error_response(msg_id, -32700, str(exc))
-                        )
-                    )
-                    stdout.flush()
-            except Exception as exc:  # noqa: BLE001 - boundary
-                _emit(
-                    f"mcp internal error: {_redact(repr(exc))}",
-                    level=logging.ERROR,
-                )
-                if not is_notification:
-                    stdout.write(
-                        _frame_mcp_message(
-                            _mcp_error_response(msg_id, -32603, "internal error")
-                        )
-                    )
-                    stdout.flush()
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -11991,6 +9712,14 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     w_update.add_argument("--widget", required=True, help="Widget id")
     w_update.add_argument("--body", default=None, help="JSON patch body")
     w_update.add_argument(
+        "--body-file",
+        default=None,
+        help=(
+            "Path to a UTF-8 JSON file containing the patch body; "
+            "mutually exclusive with --body"
+        ),
+    )
+    w_update.add_argument(
         "--hyperlink", default=None, help="Optional URL to attach to the widget"
     )
     _add_author_guard_flags(w_update)
@@ -12096,6 +9825,13 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     )
     sticky.add_argument("--style", default=None, help="JSON style overrides")
     sticky.add_argument("--hyperlink", default=None, help="Optional URL")
+    sticky.add_argument(
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
+    )
     _add_xy(sticky)
     _add_no_author_tag_flag(sticky)
     _add_output_flags(sticky)
@@ -12106,6 +9842,13 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     textbox.add_argument("--text", required=True, help="Textbox text")
     textbox.add_argument("--style", default=None, help="JSON style overrides")
     textbox.add_argument("--hyperlink", default=None, help="Optional URL")
+    textbox.add_argument(
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
+    )
     _add_xy(textbox)
     _add_no_author_tag_flag(textbox)
     _add_output_flags(textbox)
@@ -12117,6 +9860,13 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     shape.add_argument("--text", default=None, help="Optional shape text")
     shape.add_argument("--style", default=None, help="JSON style overrides")
     shape.add_argument("--hyperlink", default=None, help="Optional URL")
+    shape.add_argument(
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
+    )
     _add_xy(shape)
     _add_no_author_tag_flag(shape)
     _add_output_flags(shape)
@@ -12130,6 +9880,13 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     arrow.add_argument("--y2", type=float, required=True, help="End y")
     arrow.add_argument("--style", default=None, help="JSON style overrides")
     arrow.add_argument("--hyperlink", default=None, help="Optional URL")
+    arrow.add_argument(
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
+    )
     _add_no_author_tag_flag(arrow)
     _add_output_flags(arrow)
     arrow.set_defaults(func=_cmd_widget_create_arrow)
@@ -12148,6 +9905,13 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
     )
     image.add_argument("--title", default=None, help="Optional image title")
     image.add_argument("--hyperlink", default=None, help="Optional URL")
+    image.add_argument(
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
+    )
     _add_xy(image)
     _add_no_author_tag_flag(image)
     _add_output_flags(image)
@@ -12240,10 +10004,23 @@ def _add_resource_subcommands(sub: argparse._SubParsersAction) -> None:
         help="Layout: free | column | row",
     )
     a_create.add_argument(
-        "--parent-id", dest="parent_id", default=None, help="Optional parent area id"
+        "--parent-id",
+        dest="parent_id",
+        type=_parse_parent_id,
+        default=None,
+        help="Optional parent area id",
     )
     _add_output_flags(a_create)
     a_create.set_defaults(func=_cmd_area_create)
+
+    a_probe = area_sub.add_parser(
+        "probe",
+        help="Probe area z-order visibility",
+    )
+    a_probe.add_argument("--mural", required=True, help="Mural id")
+    a_probe.add_argument("--area", required=True, help="Area id")
+    _add_output_flags(a_probe)
+    a_probe.set_defaults(func=_cmd_area_probe)
 
     layout = sub.add_parser("layout", help="Layout placement operations")
     layout_sub = layout.add_subparsers(dest="layout_command", required=True)

@@ -202,3 +202,211 @@ def test_create_bulk_dedup_skips_matching_layout_hash_then_dispatches_remainder(
     assert out["skipped"][0]["area_id"] == "area-1"
     assert out["succeeded"] == [{"id": "w1"}, {"id": "w2"}]
     assert out["failed"] == []
+
+
+def test_create_bulk_verifies_parent_containment_per_item(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload_path = tmp_path / "widgets.json"
+    payload_path.write_text(
+        json.dumps(
+            [
+                {"type": "sticky-note", "text": "match", "parentId": "area-1"},
+                {"type": "sticky-note", "text": "drift", "parentId": "area-2"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = _record_per_call(
+        monkeypatch,
+        mural_module,
+        outcomes=[
+            {"id": "w1"},
+            {"id": "w1", "parentId": "area-1"},
+            {"id": "area-1"},
+            {"id": "w2"},
+            {"id": "w2", "parentId": "area-other"},
+            {"id": "area-other"},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create-bulk",
+            "--mural",
+            TEST_MURAL_ID,
+            "--file",
+            str(payload_path),
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert [c["method"] for c in calls] == ["POST", "GET", "GET", "POST", "GET", "GET"]
+    out = json.loads(capsys.readouterr().out)
+    succeeded = out["succeeded"]
+    assert succeeded[0]["containment_verification"]["verdict"] == "parent_match"
+    assert succeeded[1]["containment_verification"]["verdict"] == "parent_mismatch"
+    assert any("containment verification failed" in w for w in out["warnings"])
+
+
+def test_create_bulk_probe_halts_remaining_on_geometry_mismatch(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload_path = tmp_path / "widgets.json"
+    payload_path.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "sticky-note",
+                    "text": "probe",
+                    "parentId": "area-1",
+                    "x": 2000,
+                    "y": 0,
+                },
+                {"type": "sticky-note", "text": "follow", "parentId": "area-2"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = _record_per_call(
+        monkeypatch,
+        mural_module,
+        outcomes=[
+            {"id": "w1"},
+            {"id": "w1", "parentId": "area-1", "x": 2000, "y": 0},
+            {"id": "area-1", "width": 1000, "height": 800},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create-bulk",
+            "--mural",
+            TEST_MURAL_ID,
+            "--file",
+            str(payload_path),
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert len(calls) == 3
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["succeeded"]) == 1
+    assert (
+        out["succeeded"][0]["containment_verification"]["verdict"]
+        == "geometry_mismatch"
+    )
+    assert out["probe"]["verdict"] == "geometry_mismatch"
+    assert out["probe"]["index"] == 0
+    halted = [s for s in out["skipped"] if s["reason"] == "probe_failed"]
+    assert len(halted) == 1
+    assert halted[0]["item"]["text"] == "follow"
+
+
+def test_create_bulk_probe_halts_remaining_on_post_failure(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload_path = tmp_path / "widgets.json"
+    payload_path.write_text(
+        json.dumps(
+            [
+                {"type": "sticky-note", "text": "probe", "parentId": "area-1"},
+                {"type": "sticky-note", "text": "follow", "parentId": "area-2"},
+                {"type": "sticky-note", "text": "no-parent"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = _record_per_call(
+        monkeypatch,
+        mural_module,
+        outcomes=[
+            mural_module.MuralError("HTTP 400 INVALID_FIELD"),
+            {"id": "w3"},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create-bulk",
+            "--mural",
+            TEST_MURAL_ID,
+            "--file",
+            str(payload_path),
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert len(calls) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["probe"]["reason"] == "post_failed"
+    assert out["probe"]["index"] == 0
+    halted = [s for s in out["skipped"] if s["reason"] == "probe_failed"]
+    assert len(halted) == 1
+    assert halted[0]["item"]["text"] == "follow"
+    assert len(out["succeeded"]) == 1
+    assert out["succeeded"][0]["id"] == "w3"
+    assert len(out["failed"]) == 1
+
+
+def test_create_bulk_probe_success_lets_remaining_proceed(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload_path = tmp_path / "widgets.json"
+    payload_path.write_text(
+        json.dumps(
+            [
+                {"type": "sticky-note", "text": "probe", "parentId": "area-1"},
+                {"type": "sticky-note", "text": "follow", "parentId": "area-1"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _record_per_call(
+        monkeypatch,
+        mural_module,
+        outcomes=[
+            {"id": "w1"},
+            {"id": "w1", "parentId": "area-1"},
+            {"id": "area-1"},
+            {"id": "w2"},
+            {"id": "w2", "parentId": "area-1"},
+            {"id": "area-1"},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create-bulk",
+            "--mural",
+            TEST_MURAL_ID,
+            "--file",
+            str(payload_path),
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    out = json.loads(capsys.readouterr().out)
+    assert out["probe"]["verdict"] == "parent_match"
+    assert len(out["succeeded"]) == 2
+    assert not [s for s in out["skipped"] if s["reason"] == "probe_failed"]

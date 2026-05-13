@@ -65,7 +65,7 @@ def test_logout_transparency_lines_content(mural_module: Any) -> None:
     assert lines[0] == "Credentials have been cleared from this machine."
     assert lines[1] == (
         "Your Mural OAuth tokens may remain active server-side until they "
-        "expire (access tokens have a short TTL, typically ~15 minutes; "
+        "expire (access tokens have a documented 15-minute TTL; "
         "refresh tokens persist longer and are not rotated on use)."
     )
     assert lines[2] == (

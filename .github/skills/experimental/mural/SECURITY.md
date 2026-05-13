@@ -7,7 +7,7 @@ ms.topic: reference
 <!-- markdownlint-disable-file -->
 # Mural Skill Security Model
 
-This document records the STRIDE threat model for the Mural skill (`scripts/mural.py`). The model is organized by trust bucket: Browser to Loopback (B1), CLI to Mural endpoints (B2), On-disk cache (B3), and MCP stdio (B4). Each bucket enumerates all six STRIDE categories with the in-code mitigations that address them. Assets and adversaries are enumerated first because credential-storage docs ([`docs/agents/mural/credentials.md`](../../../../docs/agents/mural/credentials.md)) reference them by id. Acknowledged enterprise readiness gaps are listed at the end of the document.
+This document records the STRIDE threat model for the Mural skill (the `mural` package under `scripts/mural/`). The model is organized by trust bucket: Browser to Loopback (B1), CLI to Mural endpoints (B2), On-disk cache (B3), and MCP stdio (B4). Each bucket enumerates all six STRIDE categories with the in-code mitigations that address them. Assets and adversaries are enumerated first because credential-storage docs ([`docs/agents/mural/credentials.md`](../../../../docs/agents/mural/credentials.md)) reference them by id. Acknowledged enterprise readiness gaps are listed at the end of the document.
 
 > **See also: repo-wide STRIDE model.** This skill participates in the repository-wide threat model at [`docs/security/security-model.md`](../../../../docs/security/security-model.md). The Authorization Code + PKCE login flow implemented by `_run_login` is enumerated there as threats **OA-1 through OA-17** in [§ OAuth Authentication Threats](../../../../docs/security/security-model.md#oauth-authentication-threats). Each OA row cites Mural's published OAuth documentation at <https://developers.mural.co/public/docs/oauth> (verified 2026-05-10) and pins residual-risk expectations against published RFC behavior. Gap **G-EOP-2** below (refresh-token non-rotation) is **verified correct** against that source.
 
@@ -39,15 +39,15 @@ The Authorization Code + PKCE flow opens the user's default browser at Mural's a
 
 A hostile page in the browser could attempt to deliver a forged authorization response.
 
-* The login flow generates a random `state` parameter and rejects callbacks whose `state` does not match (see [`scripts/mural.py`](scripts/mural.py) `_run_login`).
-* The loopback handler verifies the inbound `Host` header matches the bound loopback address before processing the request (see [`scripts/mural.py`](scripts/mural.py) `_LoopbackHandler`).
+* The login flow generates a random `state` parameter and rejects callbacks whose `state` does not match (see [`scripts/mural/`](scripts/mural/) `_run_login`).
+* The loopback handler verifies the inbound `Host` header matches the bound loopback address before processing the request (see [`scripts/mural/`](scripts/mural/) `_LoopbackHandler`).
 
 ### Tampering
 
 The loopback channel is plaintext HTTP because TLS to `127.0.0.1` is not available without a custom CA.
 
-* The listener is bound to `127.0.0.1` only (never `0.0.0.0` or `::`), so on-host code is the only writer (see [`scripts/mural.py`](scripts/mural.py) `_start_loopback_server`).
-* The redirect URI is validated to require an IPv4 loopback literal; `localhost` and `[::1]` are rejected (see [`scripts/mural.py`](scripts/mural.py) `_validate_redirect_uri`).
+* The listener is bound to `127.0.0.1` only (never `0.0.0.0` or `::`), so on-host code is the only writer (see [`scripts/mural/`](scripts/mural/) `_start_loopback_server`).
+* The redirect URI is validated to require an IPv4 loopback literal; `localhost` and `[::1]` are rejected (see [`scripts/mural/`](scripts/mural/) `_validate_redirect_uri`).
 
 ### Repudiation
 
@@ -57,21 +57,21 @@ Not applicable. The loopback exchange is a synchronous, in-process step; no pers
 
 A hostile referrer or shoulder surfer could attempt to capture the authorization code.
 
-* PKCE binds the authorization code to a per-flow `code_verifier`, so a captured code cannot be redeemed without the verifier held only by this process (see [`scripts/mural.py`](scripts/mural.py) `_generate_pkce_pair`, `_verify_pkce`).
+* PKCE binds the authorization code to a per-flow `code_verifier`, so a captured code cannot be redeemed without the verifier held only by this process (see [`scripts/mural/`](scripts/mural/) `_generate_pkce_pair`, `_verify_pkce`).
 * The loopback responds with a minimal HTML success page that contains no token material.
 
 ### Denial of Service
 
 The listener is a process-local socket and an attractive target for local resource exhaustion.
 
-* The loopback server is single-shot: it accepts one request, completes the handshake, and shuts down (see [`scripts/mural.py`](scripts/mural.py) `_start_loopback_server`).
-* The login wait has a bounded timeout and the bound port is fixed so collisions surface immediately as `MuralError("port 8765 already in use; set MURAL_REDIRECT_URI")` rather than silently rebinding (see [`scripts/mural.py`](scripts/mural.py) `_run_login`).
+* The loopback server is single-shot: it accepts one request, completes the handshake, and shuts down (see [`scripts/mural/`](scripts/mural/) `_start_loopback_server`).
+* The login wait has a bounded timeout and the bound port is fixed so collisions surface immediately as `MuralError("port 8765 already in use; set MURAL_REDIRECT_URI")` rather than silently rebinding (see [`scripts/mural/`](scripts/mural/) `_run_login`).
 
 ### Elevation of Privilege
 
 A request to an unexpected path or method could attempt to drive the handler into unintended code paths.
 
-* The handler accepts only `GET /callback` and rejects every other method or path with HTTP 404 (see [`scripts/mural.py`](scripts/mural.py) `_LoopbackHandler`).
+* The handler accepts only `GET /callback` and rejects every other method or path with HTTP 404 (see [`scripts/mural/`](scripts/mural/) `_LoopbackHandler`).
 
 ## Bucket B2: CLI → Mural endpoints
 
@@ -84,17 +84,17 @@ All REST and OAuth token-endpoint calls target `https://app.mural.co/...` over T
 ### Tampering
 
 * TLS protects request and response bodies in transit.
-* Token-endpoint calls go through a dedicated opener that refuses HTTP redirects, so a 30x cannot be used to silently retarget the request (see [`scripts/mural.py`](scripts/mural.py) `_NoRedirect`).
+* Token-endpoint calls go through a dedicated opener that refuses HTTP redirects, so a 30x cannot be used to silently retarget the request (see [`scripts/mural/`](scripts/mural/) `_NoRedirect`).
 
 ### Repudiation
 
-* Token responses are persisted with `obtained_at` timestamps so `auth status` can show when each profile was last refreshed (see [`scripts/mural.py`](scripts/mural.py) `_apply_refresh`).
+* Token responses are persisted with `obtained_at` timestamps so `auth status` can show when each profile was last refreshed (see [`scripts/mural/`](scripts/mural/) `_apply_refresh`).
 
 ### Information Disclosure
 
 * Bearer tokens are sent only in the `Authorization` header to `https://app.mural.co` and never logged.
-* The token-endpoint opener blocks 30x responses, preventing a hostile redirect from leaking refresh tokens to a non-Mural origin (see [`scripts/mural.py`](scripts/mural.py) `_NoRedirect`).
-* The token response parser requires `Content-Type: application/json` and reads through a capped-size reader; a non-JSON response (HTML error page, captive portal, etc.) raises a typed error rather than being parsed as a token (see [`scripts/mural.py`](scripts/mural.py) `_parse_token_response`).
+* The token-endpoint opener blocks 30x responses, preventing a hostile redirect from leaking refresh tokens to a non-Mural origin (see [`scripts/mural/`](scripts/mural/) `_NoRedirect`).
+* The token response parser requires `Content-Type: application/json` and reads through a capped-size reader; a non-JSON response (HTML error page, captive portal, etc.) raises a typed error rather than being parsed as a token (see [`scripts/mural/`](scripts/mural/) `_parse_token_response`).
 
 ### Denial of Service
 
@@ -111,7 +111,7 @@ All REST and OAuth token-endpoint calls target `https://app.mural.co/...` over T
 The skill performs every Mural API and OAuth token-endpoint call through `urllib.request.urlopen`. There is no `ssl.SSLContext`, custom `HTTPSHandler`, `cafile`/`capath` argument, or certificate-pinning callback anywhere in the skill source. Operators inherit Python's default HTTPS behavior end to end, with the implications below.
 
 * **Trust store.** Validation uses the default `ssl.create_default_context()` (created implicitly by `urllib`), which loads the system trust store. On Linux this is OpenSSL's default cert paths; on macOS Python links against the system Security framework when built with the official installer; on Windows Python loads the SChannel certificate store.
-* **Custom CA roots.** The skill does **not** expose a CLI flag for a CA bundle. Operators behind a TLS-inspecting proxy or with an internal CA must export the standard Python/OpenSSL environment variables (`SSL_CERT_FILE`, `SSL_CERT_DIR`) before invoking `python scripts/mural.py` or launching the MCP server. The skill does not depend on `requests`, so `REQUESTS_CA_BUNDLE` has no effect.
+* **Custom CA roots.** The skill does **not** expose a CLI flag for a CA bundle. Operators behind a TLS-inspecting proxy or with an internal CA must export the standard Python/OpenSSL environment variables (`SSL_CERT_FILE`, `SSL_CERT_DIR`) before invoking `python -m mural` or launching the MCP server. The skill does not depend on `requests`, so `REQUESTS_CA_BUNDLE` has no effect.
 * **Certificate pinning.** None. Validation relies entirely on the system trust store. This is acceptable for a public SaaS endpoint (`app.mural.co`) but is recorded as G-TLS-1 below for customers whose policy requires explicit pinning.
 * **mTLS.** Not supported by the skill. Mural's API does not require client certificates, so this is not currently a gap.
 * **TLS version and ciphers.** Inherited from the host Python build's OpenSSL. The skill makes no calls to `set_ciphers`, `minimum_version`, or `set_alpn_protocols`. Hosts requiring TLS 1.2 floors or specific cipher suites must enforce them through the Python build or system OpenSSL configuration.
@@ -138,18 +138,18 @@ Devcontainer, Codespaces, and WSL2 contexts inherit the host operator's trust; t
 
 ### Spoofing
 
-* Each profile entry is bound to its registered `client_id`. A token loaded under a profile whose `client_id` does not match the current `MURAL_CLIENT_ID` is rejected at load time so a token issued for a different OAuth app cannot be silently reused (see [`scripts/mural.py`](scripts/mural.py) `_select_profile`).
+* Each profile entry is bound to its registered `client_id`. A token loaded under a profile whose `client_id` does not match the current `MURAL_CLIENT_ID` is rejected at load time so a token issued for a different OAuth app cannot be silently reused (see [`scripts/mural/`](scripts/mural/) `_select_profile`).
 
 ### Tampering
 
 * All writes go through `os.open(O_WRONLY | O_CREAT | O_EXCL, 0o600)` followed by `os.replace` so partial writes are never observed.
-* Concurrent CLI and MCP writers serialize through an advisory lock on the sibling `<path>.lock` file (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows), preventing interleaved writes from corrupting the v2 envelope (see [`scripts/mural.py`](scripts/mural.py) `_acquire_cache_lock`).
-* The credential-file parser performs no shell expansion and no `$VAR` interpolation; values are stored verbatim and matching surrounding quotes are stripped without further processing (see [`scripts/mural.py`](scripts/mural.py) `FileBackend._read_all`). A tampered file therefore cannot escalate to subprocess execution via parsed values.
+* Concurrent CLI and MCP writers serialize through an advisory lock on the sibling `<path>.lock` file (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows), preventing interleaved writes from corrupting the v2 envelope (see [`scripts/mural/`](scripts/mural/) `_acquire_cache_lock`).
+* The credential-file parser performs no shell expansion and no `$VAR` interpolation; values are stored verbatim and matching surrounding quotes are stripped without further processing (see [`scripts/mural/`](scripts/mural/) `FileBackend._read_all`). A tampered file therefore cannot escalate to subprocess execution via parsed values.
 
 ### Repudiation
 
 * Each profile entry records `obtained_at` and the granted scope set so the source and freshness of any cached credential is auditable from the cache file alone.
-* `mural auth status` reports `credential_file` (resolved path) and `credential_file_exists` (boolean) so operators have a stable, scriptable view of which credential source the runtime would load (see [`scripts/mural.py`](scripts/mural.py) `_cmd_auth_status`).
+* `mural auth status` reports `credential_file` (resolved path) and `credential_file_exists` (boolean) so operators have a stable, scriptable view of which credential source the runtime would load (see [`scripts/mural/`](scripts/mural/) `_cmd_auth_status`).
 
 ### Information Disclosure
 
@@ -165,7 +165,7 @@ Devcontainer, Codespaces, and WSL2 contexts inherit the host operator's trust; t
 
 ### Elevation of Privilege
 
-* The schema-version check refuses to load a v1 cache as v2 without running the explicit `_migrate_v1_to_v2` path, which preserves the `client_id` binding contract (see [`scripts/mural.py`](scripts/mural.py) `_migrate_v1_to_v2`).
+* The schema-version check refuses to load a v1 cache as v2 without running the explicit `_migrate_v1_to_v2` path, which preserves the `client_id` binding contract (see [`scripts/mural/`](scripts/mural/) `_migrate_v1_to_v2`).
 * `MURAL_KEYRING_BACKEND` accepts a `module.path.ClassName` string and instantiates it via `importlib.import_module` + `getattr`. This is intentional for tests and unusual desktop environments, but it permits arbitrary class instantiation from any importable module. An attacker who can already set environment variables for the CLI process can already do worse, so this is rated EoP-Low; treat the env var as part of the operator-controlled trust surface.
 
 > **Secret rotation:** The `client_secret` outlives any access token. To rotate, revoke the old credential at <https://app.mural.co/account/api> first, then re-run `mural auth bootstrap` to write fresh values. Deleting the credential file alone does not revoke the secret server-side.
@@ -195,7 +195,7 @@ The skill exposes the same operations as the CLI through a hand-rolled stdio MCP
 ### Information Disclosure
 
 * Tool results are JSON-encoded Mural payloads; tokens never appear in tool results.
-* All log output is filtered through `_redact`, which masks the access token, refresh token, code verifier, code challenge, `client_secret`, and the form-style `code` parameter in any logged JSON or form payload (see [`scripts/mural.py`](scripts/mural.py) `_redact`). Bearer headers and Azure Blob SAS query strings are also redacted.
+* All log output is filtered through `_redact`, which masks the access token, refresh token, code verifier, code challenge, `client_secret`, and the form-style `code` parameter in any logged JSON or form payload (see [`scripts/mural/`](scripts/mural/) `_redact`). Bearer headers and Azure Blob SAS query strings are also redacted.
 * Internal MCP errors emitted to stderr are passed through `_redact(repr(exc))` before the `mcp internal error:` log line is written; the JSON-RPC response carries only the generic string `"internal error"`.
 * Mural-authored text (sticky notes, textboxes, descriptions, attachments, etc.) returned through MCP tool results must be treated as untrusted by downstream agents; the server cannot detect prompt-injection content embedded in user-authored fields. Mural-sourced text is JSON-encoded into the `content[].text` payload and is never interpolated into host-model instructions by the server.
 

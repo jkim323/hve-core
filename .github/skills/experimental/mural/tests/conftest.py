@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-import importlib
 import io
 import os
 import pathlib
+import sys
 import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -112,10 +112,23 @@ def reset_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def mural_module() -> Any:
-    """Import the `mural` script module fresh for each test."""
+    """Import the `mural` package fresh for each test.
+
+    Purges every previously-imported ``mural`` and ``mural.*`` submodule from
+    ``sys.modules`` before re-importing so that module-level state (env vars,
+    cached config) is re-evaluated under the active monkeypatch.
+    """
+    targets = {
+        name
+        for name in list(sys.modules)
+        if name == "mural" or name.startswith("mural.")
+    }
+    for name in targets:
+        sys.modules.pop(name, None)
+
     import mural
 
-    return importlib.reload(mural)
+    return mural
 
 
 @pytest.fixture

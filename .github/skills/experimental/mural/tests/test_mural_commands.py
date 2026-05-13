@@ -1064,7 +1064,7 @@ def test_auth_setup_json_envelope(
         "profile": "alpha",
         "token_store": str(fake_token_store),
         "status": "prepared",
-        "next_steps": ["mural.py auth login --profile alpha"],
+        "next_steps": ["python -m mural auth login --profile alpha"],
     }
 
 
@@ -2587,3 +2587,343 @@ def test_spatial_group_help_lists_pr1_and_pr2_verbs(
         "arrow-graph",
     ):
         assert verb in out
+
+
+# ---------------------------------------------------------------------------
+# Parent containment verification
+# ---------------------------------------------------------------------------
+
+
+def test_widget_create_with_parent_verifies_containment_ok(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parent_id = "area-1"
+    calls = _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            {"id": TEST_WIDGET_ID, "parentId": parent_id},
+            {"id": parent_id},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "sticky-note",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "hello",
+            "--x",
+            "10",
+            "--y",
+            "20",
+            "--parent-id",
+            parent_id,
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["json_body"]["parentId"] == parent_id
+    assert calls[1]["method"] == "GET"
+    payload = json.loads(capsys.readouterr().out)
+    verdict = payload["containment_verification"]
+    assert verdict["verdict"] == "parent_match"
+    assert verdict["via"] == "parentId"
+    assert verdict["expected_parent_id"] == parent_id
+
+
+def test_widget_create_with_parent_mismatch_returns_failure(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    expected = "area-expected"
+    calls = _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            {"id": TEST_WIDGET_ID, "parentId": "area-other"},
+            {"id": "area-other"},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "sticky-note",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "hello",
+            "--x",
+            "10",
+            "--y",
+            "20",
+            "--parent-id",
+            expected,
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_FAILURE
+    assert calls[0]["method"] == "POST"
+    assert calls[1]["method"] == "GET"
+    payload = json.loads(capsys.readouterr().out)
+    verdict = payload["containment_verification"]
+    assert verdict["verdict"] == "parent_mismatch"
+    assert verdict["expected_parent_id"] == expected
+    assert verdict["persisted_parent_id"] == "area-other"
+
+
+def test_widget_create_with_parent_readback_failure_returns_failure(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            mural_module.MuralAPIError(500, "BOOM", "transient"),
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "sticky-note",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "hello",
+            "--x",
+            "10",
+            "--y",
+            "20",
+            "--parent-id",
+            "area-x",
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_FAILURE
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["containment_verification"]["verdict"] == "readback_failed"
+
+
+def test_widget_create_with_parent_geometry_match_returns_success(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parent_id = "area-1"
+    _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            {"id": TEST_WIDGET_ID, "parentId": parent_id, "x": 10, "y": 20},
+            {"id": parent_id, "width": 1000, "height": 800},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "sticky-note",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "in-bounds",
+            "--x",
+            "10",
+            "--y",
+            "20",
+            "--parent-id",
+            parent_id,
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    payload = json.loads(capsys.readouterr().out)
+    verdict = payload["containment_verification"]
+    assert verdict["verdict"] == "geometry_match"
+    assert verdict["via"] == "parentId"
+
+
+def test_widget_create_with_parent_geometry_mismatch_returns_failure(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parent_id = "area-1"
+    _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            {"id": TEST_WIDGET_ID, "parentId": parent_id, "x": 2000, "y": 20},
+            {"id": parent_id, "width": 1000, "height": 800},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "sticky-note",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "out-of-bounds",
+            "--x",
+            "2000",
+            "--y",
+            "20",
+            "--parent-id",
+            parent_id,
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_FAILURE
+    payload = json.loads(capsys.readouterr().out)
+    verdict = payload["containment_verification"]
+    assert verdict["verdict"] == "geometry_mismatch"
+    assert verdict["via"] == "parentId"
+    assert "off-area" in verdict["recommendation"]
+
+
+def test_widget_create_rejects_empty_parent_id(
+    mural_module: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        mural_module.main(
+            [
+                "widget",
+                "create",
+                "sticky-note",
+                "--mural",
+                TEST_MURAL_ID,
+                "--text",
+                "hi",
+                "--x",
+                "10",
+                "--y",
+                "20",
+                "--parent-id",
+                "   ",
+                "--no-author-tag",
+            ]
+        )
+
+    err = capsys.readouterr().err
+    assert "--parent-id" in err
+    assert "non-empty string" in err
+
+
+def test_widget_update_body_file_loads_patch(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    body_file = tmp_path / "patch.json"
+    body_file.write_text(json.dumps({"text": "from-file"}), encoding="utf-8")
+    calls = _patch_request(
+        monkeypatch, mural_module, return_value={"id": TEST_WIDGET_ID}
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "update",
+            "--mural",
+            TEST_MURAL_ID,
+            "--widget",
+            TEST_WIDGET_ID,
+            "--body-file",
+            str(body_file),
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert calls[0]["method"] == "PATCH"
+    assert calls[0]["json_body"] == {"text": "from-file"}
+
+
+def test_widget_update_body_and_body_file_mutually_exclusive(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    body_file = tmp_path / "patch.json"
+    body_file.write_text(json.dumps({"text": "x"}), encoding="utf-8")
+    _patch_request(monkeypatch, mural_module, return_value={})
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "update",
+            "--mural",
+            TEST_MURAL_ID,
+            "--widget",
+            TEST_WIDGET_ID,
+            "--body",
+            '{"text":"y"}',
+            "--body-file",
+            str(body_file),
+        ]
+    )
+
+    assert rc == mural_module.EXIT_FAILURE
+
+
+def test_widget_update_with_parent_verifies_and_emits_verdict(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parent_id = "area-2"
+    calls = _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID, "parentId": parent_id},
+            {"id": TEST_WIDGET_ID, "parentId": parent_id},
+            {"id": parent_id},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "update",
+            "--mural",
+            TEST_MURAL_ID,
+            "--widget",
+            TEST_WIDGET_ID,
+            "--body",
+            json.dumps({"parentId": parent_id}),
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert calls[0]["method"] == "PATCH"
+    assert calls[1]["method"] == "GET"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["containment_verification"]["verdict"] == "parent_match"

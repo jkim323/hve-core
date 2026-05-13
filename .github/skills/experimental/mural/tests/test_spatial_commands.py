@@ -893,3 +893,69 @@ def test_spatial_arrow_graph_output_writes_to_file(
     assert captured == ""
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert payload["edges"][0]["id"] == "e1"
+
+
+# ---------------------------------------------------------------------------
+# _area_probe_verdict: occluded branch escalation contract
+# ---------------------------------------------------------------------------
+
+
+def test_area_probe_verdict_occluded_recommends_operator_escalation(
+    mural_module: Any,
+) -> None:
+    """The occluded recommendation must route operators to the Mural UI.
+
+    Mural's REST API exposes no canvas z-order operation, so the verdict
+    payload is the only place the skill can prevent callers from retrying
+    the probe, destroying-and-recreating widgets, or hand-tuning offsets.
+    Pin the contract here so future drift in the recommendation string
+    fails the build.
+    """
+    area_id = "area-1"
+    probe = {"id": "probe-1", "x": 10, "y": 10, "width": 20, "height": 20}
+    occluder = {"id": "occluder-1", "x": 0, "y": 0, "width": 100, "height": 100}
+    area_chain = [{"id": area_id, "type": "area"}]
+
+    result = mural_module._area_probe_verdict(
+        probe=probe,
+        siblings=[occluder],
+        area_chain=area_chain,
+        expected_area_id=area_id,
+    )
+
+    assert result["verdict"] == "occluded"
+    assert result["siblings_above"] == ["occluder-1"]
+    rec = result["recommendation"]
+    assert "occluder-1" in rec
+    assert "Mural UI" in rec
+    assert "'Send to Back'" in rec and "'Bring to Front'" in rec
+    assert "anchor restructure" in rec
+    assert "Pause the workflow" in rec
+    assert "Do not re-run the probe" in rec
+    assert "destroy and recreate" in rec
+    assert "hand-tune (x, y) offsets" in rec
+    assert "mural-seeding-patterns.instructions.md" in rec
+
+
+def test_mural_area_probe_tool_description_carries_operator_contract(
+    mural_module: Any,
+) -> None:
+    """The MCP tool description is the LLM-facing surface for the contract.
+
+    Callers (dt-coach, rai-planner, ux-ui-designer) read this description
+    when deciding whether to invoke the tool. The recommendation string in
+    the response body is necessary but not sufficient: by the time an LLM
+    parses it, the seeding workflow may already be in flight. Pin the
+    contract language at the entry point so the hard-stop semantics are
+    visible before invocation.
+    """
+    spec = mural_module._TOOL_REGISTRY["mural_area_probe"]
+    description = spec["description"]
+    assert "occluded" in description
+    assert "hard stop" in description
+    assert "operator" in description
+    assert "Mural UI" in description
+    assert "'Send to Back'" in description
+    assert "Do not re-run the probe" in description
+    assert "destroy and recreate" in description
+    assert "mural-seeding-patterns.instructions.md" in description

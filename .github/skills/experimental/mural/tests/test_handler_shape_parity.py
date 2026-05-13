@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: MIT
 """AST-based contract tests: every CLI/MCP handler pair must emit shape-compatible JSON.
 
-Statically parses ``mural.py`` and compares the literal-dict output shapes of paired
-``_cmd_<name>`` and ``_tool_<name>`` handlers. Catches the bug class where both sides
-build independent literal dicts that drift in their top-level key sets (the original
-instances were ``auth_status`` and ``widget_delete``).
+Statically parses every ``*.py`` file under the ``mural`` package and compares the
+literal-dict output shapes of paired ``_cmd_<name>`` and ``_tool_<name>`` handlers.
+Catches the bug class where both sides build independent literal dicts that drift in
+their top-level key sets (the original instances were ``auth_status`` and
+``widget_delete``).
 
 Conservative by design: a pair is only compared when each side has exactly one
 statically-extractable literal dict shape. Passthrough returns of API calls,
@@ -20,7 +21,7 @@ import pathlib
 
 import pytest
 
-MURAL_PY = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "mural.py"
+MURAL_PKG = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "mural"
 
 # CLI commands that have no MCP counterpart by design.
 ALLOWED_CLI_ONLY: frozenset[str] = frozenset(
@@ -143,17 +144,28 @@ def _collect_tool_output_shapes(func: ast.FunctionDef) -> list[frozenset[str]]:
 
 
 def _parse_handlers() -> tuple[dict[str, ast.FunctionDef], dict[str, ast.FunctionDef]]:
-    """Return ``({cmd_basename: node}, {tool_basename: node})`` from ``mural.py``."""
-    tree = ast.parse(MURAL_PY.read_text(encoding="utf-8"), filename=str(MURAL_PY))
+    """Return ``({cmd_basename: node}, {tool_basename: node})`` from ``mural`` pkg.
+
+    Walks every ``*.py`` file under ``scripts/mural/`` and aggregates handler
+    definitions across all submodules, so that the parity contract holds after
+    the source is split into a package.
+    """
+    if not MURAL_PKG.is_dir():
+        raise FileNotFoundError(
+            f"mural package not found at {MURAL_PKG}; "
+            "expected a Python package directory"
+        )
     cmds: dict[str, ast.FunctionDef] = {}
     tools: dict[str, ast.FunctionDef] = {}
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        if node.name.startswith("_cmd_"):
-            cmds[node.name[len("_cmd_") :]] = node
-        elif node.name.startswith("_tool_"):
-            tools[node.name[len("_tool_") :]] = node
+    for path in sorted(MURAL_PKG.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if node.name.startswith("_cmd_"):
+                cmds[node.name[len("_cmd_") :]] = node
+            elif node.name.startswith("_tool_"):
+                tools[node.name[len("_tool_") :]] = node
     return cmds, tools
 
 
