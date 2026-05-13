@@ -2640,6 +2640,53 @@ def test_widget_create_with_parent_verifies_containment_ok(
     assert verdict["expected_parent_id"] == parent_id
 
 
+def test_widget_create_textbox_with_parent_verifies_containment_ok(
+    mural_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parent_id = "area-1"
+    calls = _patch_request_sequenced(
+        monkeypatch,
+        mural_module,
+        [
+            {"id": TEST_WIDGET_ID},
+            {"id": TEST_WIDGET_ID, "parentId": parent_id},
+            {"id": parent_id},
+        ],
+    )
+
+    rc = mural_module.main(
+        [
+            "widget",
+            "create",
+            "textbox",
+            "--mural",
+            TEST_MURAL_ID,
+            "--text",
+            "hello",
+            "--x",
+            "10",
+            "--y",
+            "20",
+            "--parent-id",
+            parent_id,
+            "--no-author-tag",
+        ]
+    )
+
+    assert rc == mural_module.EXIT_SUCCESS
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["path"].endswith("/widgets/textbox")
+    assert calls[0]["json_body"]["parentId"] == parent_id
+    assert calls[1]["method"] == "GET"
+    payload = json.loads(capsys.readouterr().out)
+    verdict = payload["containment_verification"]
+    assert verdict["verdict"] == "parent_match"
+    assert verdict["via"] == "parentId"
+    assert verdict["expected_parent_id"] == parent_id
+
+
 def test_widget_create_with_parent_mismatch_returns_failure(
     mural_module: Any,
     monkeypatch: pytest.MonkeyPatch,
