@@ -22,7 +22,7 @@
   "SteadyState": {
     "ScenarioName": "SteadyState",
     "AgentBytes": 10096,
-    "ColdStartBytes": 78676,
+    "ColdStartBytes": 78751,
     "LoadedFiles": [
       {
         "Path": ".github/agents/project-planning/adr-creation.agent.md",
@@ -30,7 +30,7 @@
       },
       {
         "Path": ".github/instructions/project-planning/adr-byo-template.instructions.md",
-        "Bytes": 8834
+        "Bytes": 8909
       },
       {
         "Path": ".github/instructions/project-planning/adr-handoff.instructions.md",
@@ -49,12 +49,12 @@
         "Bytes": 4181
       }
     ],
-    "Hash": "3fef52a32ab46a77cb80282312824681faa4acdcf5f3cf754de6b288e6de8d86"
+    "Hash": "8efde478be60b8ea9ce7c4d7f380f7f6a3d2d623170cfa0ed66ec15b003ce4fb"
   },
   "GovernEntry": {
     "ScenarioName": "GovernEntry",
     "AgentBytes": 10096,
-    "ColdStartBytes": 92075,
+    "ColdStartBytes": 92150,
     "LoadedFiles": [
       {
         "Path": ".github/agents/project-planning/adr-creation.agent.md",
@@ -62,7 +62,7 @@
       },
       {
         "Path": ".github/instructions/project-planning/adr-byo-template.instructions.md",
-        "Bytes": 8834
+        "Bytes": 8909
       },
       {
         "Path": ".github/instructions/project-planning/adr-handoff.instructions.md",
@@ -85,12 +85,12 @@
         "Bytes": 13399
       }
     ],
-    "Hash": "7bd541c549dedb6d707d544d296e29dab22d6d877ac665f26e896f7c9d8a4532"
+    "Hash": "554e8b5884c9c40d5564bb2fdfc70baad24069f722e4f31b37a938a8c471ae83"
   },
   "AdoptTemplate": {
     "ScenarioName": "AdoptTemplate",
     "AgentBytes": 10096,
-    "ColdStartBytes": 100089,
+    "ColdStartBytes": 100164,
     "LoadedFiles": [
       {
         "Path": ".github/agents/project-planning/adr-creation.agent.md",
@@ -98,7 +98,7 @@
       },
       {
         "Path": ".github/instructions/project-planning/adr-byo-template.instructions.md",
-        "Bytes": 8834
+        "Bytes": 8909
       },
       {
         "Path": ".github/instructions/project-planning/adr-handoff.instructions.md",
@@ -125,6 +125,6 @@
         "Bytes": 13399
       }
     ],
-    "Hash": "3d1cc536b4c312dcf9c7be318c9a84effc529f5a0035248115dacbf5c70f4404"
+    "Hash": "71770841c7f057f6c0aa4a6b633349d460a3990993d7acf8f2ad07ccf80e1609"
   }
 }
