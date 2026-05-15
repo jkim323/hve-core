@@ -20,15 +20,17 @@ Assessments are evaluated against the NIST AI Risk Management Framework 1.0 trus
 
 ## Published Assessments
 
-| Cycle                                   | Documents                                                                                                                                                                          |
-|-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [HVE Core - May 2026](hve-core-2026-05) | [Review Summary](hve-core-2026-05/rai-review-summary.md), [Backlog Handoff](hve-core-2026-05/rai-backlog-handoff.md), [Transparency Note](hve-core-2026-05/transparency-note.md)  |
+| Cycle                                   | Documents                                                                                                            |
+|-----------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| [HVE Core - May 2026](hve-core-2026-05) | [Review Summary](hve-core-2026-05/rai-review-summary.md), [Backlog Handoff](hve-core-2026-05/rai-backlog-handoff.md) |
+
+The public-facing Transparency Note for HVE Core is published at the repository root: [TRANSPARENCY-NOTE.md](../../../TRANSPARENCY-NOTE.md). It is the recommended starting point for adopters, integrators, and reviewers evaluating responsible use of HVE Core.
 
 ## How to Read These Documents
 
+* **Transparency Note** ([TRANSPARENCY-NOTE.md](../../../TRANSPARENCY-NOTE.md)). Public-facing description of HVE Core's intended uses, considerations, limitations, and the responsibility boundary between HVE Core and the host platform. Includes per-agent appendices for the governance-bearing agents and the one direct generative-AI touchpoint. Lives at the repository root for discoverability.
 * **Review Summary.** Executive view: maturity reads per trustworthiness characteristic, key findings, and review checkpoint results.
 * **Backlog Handoff.** Detailed work item list (twenty items for the May 2026 cycle), pre-formatted as GitHub issue templates with placeholder IDs (`{{RAI-TEMP-N}}`). Maintainers decide which items become tracked individual issues.
-* **Transparency Note.** Public-facing description of HVE Core's intended uses, considerations, limitations, and the responsibility boundary between HVE Core and the host platform. Includes per-agent appendices for the governance-bearing agents and the one direct generative-AI touchpoint.
 
 ## AI-Assistance Disclosure
 

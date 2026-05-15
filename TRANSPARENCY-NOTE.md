@@ -20,7 +20,7 @@ estimated_reading_time: 18
 | System          | HVE Core (microsoft/hve-core)                                                        |
 | Document type   | Transparency Note                                                                    |
 | Cycle           | May 2026                                                                             |
-| Companion docs  | [Review Summary](rai-review-summary.md), [Backlog Handoff](rai-backlog-handoff.md)   |
+| Companion docs  | [Review Summary](docs/planning/rai/hve-core-2026-05/rai-review-summary.md), [Backlog Handoff](docs/planning/rai/hve-core-2026-05/rai-backlog-handoff.md)   |
 | Last updated    | 2026-05-14                                                                           |
 
 ## What is a Transparency Note?
@@ -134,7 +134,7 @@ HVE Core's nature as a static artifact corpus, combined with its dependence on a
 * **Accessibility audit not yet performed.** Documentation, agent UX surfaces in chat, and rendered artifacts have not yet been evaluated against Microsoft's accessibility standard.
 * **Security Plan is owned separately.** A Security Planner assessment for HVE Core is not yet authored. The cross-reference table in the May 2026 RAI assessment is intentionally empty pending that work.
 
-The published RAI assessment reads HVE Core's NIST AI RMF maturity as Developing for the Valid-and-Reliable, Accountable-and-Transparent, and Fair-with-Harmful-Bias-Managed characteristics, and Foundational for Safe, Secure-and-Resilient, Explainable-and-Interpretable, and Privacy-Enhanced. See the [Review Summary](rai-review-summary.md) for the per-characteristic reads and the work items that would shift those reads.
+The published RAI assessment reads HVE Core's NIST AI RMF maturity as Developing for the Valid-and-Reliable, Accountable-and-Transparent, and Fair-with-Harmful-Bias-Managed characteristics, and Foundational for Safe, Secure-and-Resilient, Explainable-and-Interpretable, and Privacy-Enhanced. See the [Review Summary](docs/planning/rai/hve-core-2026-05/rai-review-summary.md) for the per-characteristic reads and the work items that would shift those reads.
 
 ## System performance
 
@@ -182,7 +182,7 @@ The May 2026 Responsible AI assessment for HVE Core followed a six-phase protoco
 * **Early Operations (4 items).** Multi-agent orchestration audit trail, production telemetry and re-assessment cadence, memory-layer retention and consent specification, and gitleaks coverage in cloud agent CI.
 * **Ongoing Governance (6 items).** Customer-handoff governance, language and code-language coverage expansion, accessibility audit, evaluation cohort diversification, sensitive customer data handling guidance, and agent discoverability promotion.
 
-Items are tracked through `microsoft/hve-core` issues; the [Backlog Handoff](rai-backlog-handoff.md) lists each item with placeholder identifiers (`{{RAI-TEMP-N}}`) ready for issue conversion.
+Items are tracked through `microsoft/hve-core` issues; the [Backlog Handoff](docs/planning/rai/hve-core-2026-05/rai-backlog-handoff.md) lists each item with placeholder identifiers (`{{RAI-TEMP-N}}`) ready for issue conversion.
 
 The assessment did not catalog risks tied to model training, inference-time safety thresholds, or differential-privacy accounting because HVE Core does not train models, does not host inference, and does not maintain a training corpus. Those risks belong to the host platform.
 
@@ -202,18 +202,18 @@ Avoid automation bias. Agent suggestions should be read as starting points for h
 * [Microsoft Responsible AI Resources](https://www.microsoft.com/en-us/ai/responsible-ai-resources)
 * [NIST AI Risk Management Framework 1.0](https://www.nist.gov/itl/ai-risk-management-framework)
 * [Responsible use of GitHub Copilot features](https://docs.github.com/en/copilot/responsible-use)
-* [HVE Core Review Summary (May 2026)](rai-review-summary.md)
-* [HVE Core Backlog Handoff (May 2026)](rai-backlog-handoff.md)
+* [HVE Core Review Summary (May 2026)](docs/planning/rai/hve-core-2026-05/rai-review-summary.md)
+* [HVE Core Backlog Handoff (May 2026)](docs/planning/rai/hve-core-2026-05/rai-backlog-handoff.md)
 
 ## Learn more about HVE Core
 
 * [HVE Core repository (microsoft/hve-core)](https://github.com/microsoft/hve-core)
-* [Documentation index](../../../README.md)
-* [Contributing guidelines](../../../contributing/README.md)
-* [Architecture overview](../../../architecture/README.md)
-* [Custom agents](../../../contributing/custom-agents.md)
-* [Skills overview](../../../contributing/skills.md)
-* [Roadmap](../../../contributing/ROADMAP.md)
+* [Documentation index](docs/README.md)
+* [Contributing guidelines](docs/contributing/README.md)
+* [Architecture overview](docs/architecture/README.md)
+* [Custom agents](docs/contributing/custom-agents.md)
+* [Skills overview](docs/contributing/skills.md)
+* [Roadmap](docs/contributing/ROADMAP.md)
 
 Issues, feedback, and Responsible AI concerns: open a GitHub issue at [microsoft/hve-core](https://github.com/microsoft/hve-core/issues) using the relevant issue template.
 

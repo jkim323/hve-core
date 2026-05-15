@@ -139,6 +139,8 @@ See [SECURITY.md](./SECURITY.md) for the security policy and vulnerability repor
 
 See [GOVERNANCE.md](./GOVERNANCE.md) for the project governance model.
 
+See [TRANSPARENCY-NOTE.md](./TRANSPARENCY-NOTE.md) for the public Responsible AI Transparency Note covering HVE Core's intended uses, considerations, limitations, and the responsibility boundary between HVE Core and the host platform.
+
 ## Trademark Notice
 
 > This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
