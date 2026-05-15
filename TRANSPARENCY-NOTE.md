@@ -12,16 +12,15 @@ keywords:
   - copilot
 estimated_reading_time: 18
 ---
-
 ## Overview
 
-| Field           | Value                                                                                |
-|-----------------|--------------------------------------------------------------------------------------|
-| System          | HVE Core (microsoft/hve-core)                                                        |
-| Document type   | Transparency Note                                                                    |
-| Cycle           | May 2026                                                                             |
-| Companion docs  | [Review Summary](docs/planning/rai/hve-core-2026-05/rai-review-summary.md), [Backlog Handoff](docs/planning/rai/hve-core-2026-05/rai-backlog-handoff.md)   |
-| Last updated    | 2026-05-14                                                                           |
+| Field          | Value                                                                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System         | HVE Core (microsoft/hve-core)                                                                                                                      |
+| Document type  | Transparency Note                                                                                                                                  |
+| Cycle          | May 2026                                                                                                                                           |
+| Companion docs | [Review Summary](docs/planning/rai/hve-core-2026-05/rai-review-summary.md), [Backlog Handoff](docs/planning/rai/hve-core-2026-05/rai-backlog-handoff.md) |
+| Last updated   | 2026-05-14                                                                                                                                         |
 
 ## What is a Transparency Note?
 
@@ -45,19 +44,19 @@ This Transparency Note describes the system at the level of the umbrella reposit
 
 ### Key terms
 
-| Term                  | Meaning in HVE Core                                                                                                                                                                                  |
-|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Artifact              | A static file shipped by HVE Core: agent definition, prompt, instructions, skill, collection, script, or workflow. Artifacts are consumed by downstream tooling; they do not execute on their own.   |
-| Custom agent          | A persona definition (`*.agent.md`) that GitHub Copilot Chat can adopt to perform a specialized workflow. Custom agents may invoke subagents and reference instructions, prompts, and skills.        |
-| Prompt                | A reusable user-message template (`*.prompt.md`) intended to be loaded into a Copilot Chat or CLI session.                                                                                           |
-| Instructions          | Behavioral guidance (`*.instructions.md`) that an agent or session loads to shape the model's responses for a given file scope, language, or workflow.                                               |
-| Skill                 | A self-contained capability package (`SKILL.md` plus optional scripts and references) that documents a reusable domain capability.                                                                   |
-| Collection            | A bundled set of artifacts (`*.collection.yml` plus a companion markdown description) that a publisher can install as a unit through one of the distribution channels.                               |
-| Subagent              | A custom agent invoked by another agent for a focused task (typical examples: a researcher subagent for read-only investigation, an implementer subagent for a single phase of work).                |
-| Distribution channel  | One of six routes by which HVE Core artifacts reach an adopter: VS Code extension, npm package, GitHub plugin marketplace, direct git clone, internal Microsoft mirror, customer-handoff repository. |
-| Host platform         | The Copilot surface that performs the actual inference: GitHub Copilot Chat in Visual Studio Code, or GitHub Copilot CLI. HVE Core does not include or replace this platform.                        |
-| Memory layer          | The persistent notes feature exposed by the host platform. HVE Core agents may write user-scope, session-scope, or repository-scope memory. Storage and retention are controlled by the host.        |
-| Governance-bearing    | An adjective applied to agents whose outputs influence downstream decisions in a binding-by-default way (planning agents, code-review agents that gate pull requests, customer-handoff agents).      |
+| Term                 | Meaning in HVE Core                                                                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Artifact             | A static file shipped by HVE Core: agent definition, prompt, instructions, skill, collection, script, or workflow. Artifacts are consumed by downstream tooling; they do not execute on their own.   |
+| Custom agent         | A persona definition (`*.agent.md`) that GitHub Copilot Chat can adopt to perform a specialized workflow. Custom agents may invoke subagents and reference instructions, prompts, and skills.      |
+| Prompt               | A reusable user-message template (`*.prompt.md`) intended to be loaded into a Copilot Chat or CLI session.                                                                                         |
+| Instructions         | Behavioral guidance (`*.instructions.md`) that an agent or session loads to shape the model's responses for a given file scope, language, or workflow.                                             |
+| Skill                | A self-contained capability package (`SKILL.md` plus optional scripts and references) that documents a reusable domain capability.                                                                 |
+| Collection           | A bundled set of artifacts (`*.collection.yml` plus a companion markdown description) that a publisher can install as a unit through one of the distribution channels.                             |
+| Subagent             | A custom agent invoked by another agent for a focused task (typical examples: a researcher subagent for read-only investigation, an implementer subagent for a single phase of work).                |
+| Distribution channel | One of six routes by which HVE Core artifacts reach an adopter: VS Code extension, npm package, GitHub plugin marketplace, direct git clone, internal Microsoft mirror, customer-handoff repository. |
+| Host platform        | The Copilot surface that performs the actual inference: GitHub Copilot Chat in Visual Studio Code, or GitHub Copilot CLI. HVE Core does not include or replace this platform.                        |
+| Memory layer         | The persistent notes feature exposed by the host platform. HVE Core agents may write user-scope, session-scope, or repository-scope memory. Storage and retention are controlled by the host.        |
+| Governance-bearing   | An adjective applied to agents whose outputs influence downstream decisions in a binding-by-default way (planning agents, code-review agents that gate pull requests, customer-handoff agents).      |
 
 ## Capabilities
 
@@ -73,13 +72,13 @@ HVE Core itself has no inference runtime, no API endpoints, no external network 
 
 A small set of artifacts crosses the boundary into direct generative output:
 
-* The **Customer Card Render** skill drives a synthetic-persona slide-rendering pipeline that uses image generation. This is the only direct generative-AI touchpoint that ships in HVE Core, and it is treated as a Sensitive Use under Microsoft's Responsible AI guidance for synthetic media that depicts people. The skill enforces a low-fidelity visual style and is documented separately in Appendix 5.
+* The **Customer Card Render** skill drives a synthetic-persona slide-rendering pipeline that uses image generation. This is the only direct generative-AI touchpoint that ships in HVE Core. Because the output is synthetic media depicting people-like figures, the skill enforces a low-fidelity visual style and is documented separately in Appendix 5 alongside its AI-disclosure, redaction, and stereotyping-review controls.
 * The **PowerPoint Builder** and **TTS Voice-over** experimental skills produce slide decks and voice audio from authored YAML, but they do not generate likenesses of people or claim to be the speaker; they are conventional content-assembly tools that consume model output authored elsewhere.
 
 #### Responsibility boundary
 
 | Aspect                         | HVE Core (microsoft/hve-core)                                              | Host platform (Copilot Chat or CLI)                                            |
-|--------------------------------|----------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| ------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Inference                      | None                                                                       | All inference happens here                                                     |
 | Model selection and management | Recommends models in artifact frontmatter; cannot enforce a model choice   | Selects, hosts, and operates the model                                         |
 | Safety classifiers             | None                                                                       | Provides input and output classification, jailbreak detection, content filters |
@@ -168,7 +167,7 @@ The May 2026 Responsible AI assessment for HVE Core followed a six-phase protoco
 
 * Phase 1 produced a system-definition pack, an evidence-driven stakeholder impact map (six stakeholder ranks from internal Microsoft engineers through community consumers), and a control surface catalog organized by NIST AI RMF characteristic and Prevent / Detect / Respond.
 * Phase 2 ran a risk-classification screening that placed HVE Core in the comprehensive depth tier.
-* Phase 4 produced a 15-row threat addendum (`T-RAI-001` through `T-RAI-015`) covering prompt injection through shared artifacts, memory-layer contamination, governance-agent attribution gaps, customer-handoff opacity, AI-authored workflow supply-chain risk, and the four Customer Card Render Sensitive-Use entries.
+* Phase 4 produced a 15-row threat addendum (`T-RAI-001` through `T-RAI-015`) covering prompt injection through shared artifacts, memory-layer contamination, governance-agent attribution gaps, customer-handoff opacity, AI-authored workflow supply-chain risk, and the four Customer Card Render synthetic-media entries.
 
 **Measure.**
 
@@ -272,12 +271,12 @@ The five appendices below cover the agents and skills that the May 2026 RAI asse
 * **Outputs:** PowerPoint slide content YAML and rendered `.pptx` files. Cards include a low-fidelity visual rendering and persona narrative.
 * **Intended uses:** Producing internal stakeholder-facing summaries of customer-research findings during ISE engagements. Communicating synthesized insight in a format that reads as illustrative rather than as a literal portrait of any individual.
 * **Specific limitations:**
-  * This is the only direct generative-AI touchpoint in HVE Core. The skill is treated as a Sensitive Use under Microsoft Responsible AI guidance for synthetic media depicting people.
+  * This is the only direct generative-AI touchpoint in HVE Core. Because the output is synthetic media depicting people-like figures, AI-disclosure, redaction, and stereotyping controls apply.
   * Even with low-fidelity enforcement, the output may be misread as portraying real individuals.
   * The bundled persona templates may encode demographic shorthand; a stereotyping audit is tracked as a Pre-Production work item in the published backlog.
   * Real participant data may bleed from source Design Thinking artifacts into rendered cards if the operator does not redact it before invoking the skill.
 * **Specific considerations:**
-  * **Hold the low-fidelity visual constraint.** Do not modify the skill to produce high-fidelity or photorealistic output. The low-fidelity style is the substantive control for the Sensitive Use classification; relaxing it requires an explicit accuracy review and an automated AI-disclosure marker, neither of which is in place yet.
+  * **Hold the low-fidelity visual constraint.** Do not modify the skill to produce high-fidelity or photorealistic output. The low-fidelity style is the substantive control that keeps the output reading as illustrative rather than as a portrait of any individual; relaxing it requires an explicit accuracy review and an automated AI-disclosure marker, neither of which is in place yet.
   * **Redact source artifacts before rendering.** Real names, direct quotes attributed to identifiable individuals, photographs, and any other personally identifying detail in the Design Thinking research must be removed or generalized before the skill is invoked.
   * **Preserve disclosure on every output.** Generated cards should carry the AI-assistance disclosure footer and a slide-master watermark indicating that personas are synthetic. Do not strip these markers when copying decks into other contexts.
   * **Limit distribution to the originating engagement.** Synthetic personas should not be republished, repurposed for marketing, or used as evaluation data without explicit review.
@@ -294,12 +293,12 @@ Outputs from HVE Core agents and skills are advisory. They do not constitute leg
 
 ## About this document
 
-| Field          | Value                                              |
-|----------------|----------------------------------------------------|
-| Published      | 2026-05-14                                         |
-| Last updated   | 2026-05-14                                         |
-| Cycle          | HVE Core RAI Assessment, May 2026                  |
-| Document type  | Transparency Note                                  |
+| Field         | Value                             |
+| ------------- | --------------------------------- |
+| Published     | 2026-05-14                        |
+| Last updated  | 2026-05-14                        |
+| Cycle         | HVE Core RAI Assessment, May 2026 |
+| Document type | Transparency Note                 |
 
 This document is provided as-is and for informational purposes only. Information in this document, including URL and other references, may change without notice. This document is not legal advice. Consult appropriate counsel for jurisdiction-specific obligations.
 
