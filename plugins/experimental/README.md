@@ -9,6 +9,8 @@ Experimental and preview artifacts not yet promoted to stable collections
 
 Experimental and preview artifacts not yet promoted to stable collections. Items in this collection may change or be removed without notice.
 
+## Included Artifacts
+
 <!-- BEGIN AUTO-GENERATED ARTIFACTS -->
 
 ### Chat Agents
@@ -18,6 +20,12 @@ Experimental and preview artifacts not yet promoted to stable collections. Items
 | **experiment-designer** | Conversational coach that guides users through designing a Minimum Viable Experiment (MVE) with structured hypothesis formation, vetting, and experiment planning |
 | **pptx**                | Creates, updates, and manages PowerPoint slide decks using YAML-driven content with python-pptx                                                                   |
 | **pptx-subagent**       | Executes PowerPoint skill operations including content extraction, YAML creation, deck building, and visual validation                                            |
+
+### Prompts
+
+| Name              | Description                                                                                 |
+|-------------------|---------------------------------------------------------------------------------------------|
+| **cspell-config** | Creates or updates the project cspell configuration with project-specific words and ignores |
 
 ### Instructions
 
@@ -33,6 +41,7 @@ Experimental and preview artifacts not yet promoted to stable collections. Items
 |--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | **customer-card-render** | Generate customer-card PowerPoint content YAML from Design Thinking canonical artifacts and build using the shared PowerPoint skill pipeline |
 | **powerpoint**           | PowerPoint slide deck generation and management using python-pptx with YAML-driven content and styling                                       |
+| **tts-voiceover**        | Text-to-speech voice-over generation from YAML speaker notes using Azure Speech SDK with SSML pronunciation control                          |
 | **video-to-gif**         | Video-to-GIF conversion skill with FFmpeg two-pass optimization                                                                              |
 | **vscode-playwright**    | VS Code screenshot capture using Playwright MCP with serve-web for slide decks and documentation                                             |
 
@@ -52,6 +61,12 @@ copilot plugin install experimental@hve-core
 | pptx                | Creates, updates, and manages PowerPoint slide decks using YAML-driven content with python-pptx                                                                                                          |
 | pptx-subagent       | Executes PowerPoint skill operations including content extraction, YAML creation, deck building, and visual validation                                                                                   |
 
+## Commands
+
+| Command       | Description                                                                                 |
+|---------------|---------------------------------------------------------------------------------------------|
+| cspell-config | Creates or updates the project cspell configuration with project-specific words and ignores |
+
 ## Instructions
 
 | Instruction                      | Description                                                                                                                                                                                                                                                 |
@@ -66,6 +81,7 @@ copilot plugin install experimental@hve-core
 |----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | customer-card-render | Generate customer-card PowerPoint content YAML from Design Thinking canonical artifacts and build using the shared PowerPoint skill pipeline - Brought to you by microsoft/hve-core |
 | powerpoint           | PowerPoint slide deck generation and management using python-pptx with YAML-driven content and styling - Brought to you by microsoft/hve-core                                       |
+| tts-voiceover        | Text-to-speech voice-over generation from YAML speaker notes using Azure Speech SDK with SSML pronunciation control - Brought to you by microsoft/hve-core                          |
 | video-to-gif         | Video-to-GIF conversion skill with FFmpeg two-pass optimization - Brought to you by microsoft/hve-core                                                                              |
 | vscode-playwright    | VS Code screenshot capture using Playwright MCP with serve-web for slide decks and documentation - Brought to you by microsoft/hve-core                                             |
 
