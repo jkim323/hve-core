@@ -11,19 +11,21 @@ The writing style for Mural is asymmetric. Content moving *into* Mural is constr
 
 Stickies and textboxes are a workshop medium, not a document medium. AI-authored content into Mural follows these limits:
 
-| Surface            | Limit                            |
-|--------------------|----------------------------------|
-| Sticky text        | ≤8 words; ≤25 characters per tag |
-| Textbox body       | ≤25 words                        |
-| Area / frame title | ≤5 words                         |
-| Tag text           | ≤25 characters (API hard cap)    |
-| Hyperlink length   | ≤1024 characters (API hard cap)  |
+| Surface                              | Limit                                               |
+|--------------------------------------|-----------------------------------------------------|
+| Sticky text                          | ≤8 words; ≤25 characters per tag                    |
+| Textbox body — AI-authored summary   | ≤25 words                                           |
+| Textbox body — verbatim user content | No word cap; soft-wrap lines around 1024 characters |
+| Area / frame title                   | ≤5 words                                            |
+| Tag text                             | ≤25 characters (API hard cap)                       |
+| Hyperlink length                     | ≤1024 characters (API hard cap)                     |
 
 Style rules:
 
 * One idea per widget. Never pack multiple thoughts into a single sticky.
 * Plain language. No jargon stacking. No bullet lists inside a single sticky.
 * No Markdown formatting characters in `text`. Mural renders plain strings.
+* Use embedded `\n` as the canonical soft line break for bullets or steps inside one textbox, for example `"* item one\n* item two"`.
 * Active voice and present tense for actions ("ship docs", not "documentation will be shipped").
 * Title areas as nouns or short noun phrases (not sentences).
 * Lineage prefix `[dt:method=N section=NAME run=ID]` is prepended automatically by `_apply_lineage_prefix`; do not author it manually.
@@ -39,7 +41,7 @@ The downstream consumer (work-item creation, RAI capture, retro action tracking,
 * Lineage marker parsed via `_parse_lineage_prefix` into `{method, section, run_id}` when present.
 * Author attribution: whether the widget carries the reserved `authored-by-ai` tag.
 
-Hydration is multi-call (no `expand` / `include` in the Mural API). Use `mural_widget_get_with_context` for single widgets and `mural_widget_list_with_context` for batched siblings; both cache the mural → room → workspace → parent-area chain per invocation.
+Hydration is multi-call (no `expand` / `include` in the Mural API). Use the widget context read helpers for single widgets and batched siblings; both cache the mural, room, workspace, and parent-area chain per invocation.
 
 ## Hydration depth heuristic
 

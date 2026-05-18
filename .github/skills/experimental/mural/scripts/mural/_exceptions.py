@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: MIT
-"""Exception classes for the Mural CLI/MCP package.
+"""Exception classes for the Mural CLI package.
 
 All custom exception types live here so submodules can raise / catch them
 without circular imports against the legacy monolith. Constants referenced
@@ -88,8 +88,8 @@ class MuralTagMergeConflict(MuralError):
     The widget tag PATCH endpoint is a full-array replace with no ETag, so
     racing writers can clobber each other. ``_merge_tags`` performs a
     read-modify-write loop with bounded retries; on exhaustion this error
-    carries the diagnostic payload so callers (CLI and MCP) can surface a
-    structured ``tag_merge_conflict`` envelope.
+    carries the diagnostic payload so callers can surface a structured
+    ``tag_merge_conflict`` envelope.
     """
 
     def __init__(
@@ -139,8 +139,8 @@ class MuralAreaCapacityExceeded(MuralError):
     """Raised when a layout would overflow the target area's bounds.
 
     Carries the structured payload required by the refuse-don't-coerce
-    contract so the MCP/CLI surface can render
-    ``AREA_CAPACITY_EXCEEDED`` envelopes with a deterministic exit code.
+    contract so the CLI surface can render ``AREA_CAPACITY_EXCEEDED``
+    envelopes with a deterministic exit code.
     """
 
     def __init__(
@@ -178,20 +178,12 @@ class MuralBulkAtomicAbort(MuralError):
         )
 
 
-class FrameTooLarge(MuralError):
-    """Raised when an inbound MCP frame exceeds ``MURAL_MAX_FRAME_BYTES``."""
-
-
 class ResponseTooLarge(MuralError):
     """Raised when an HTTP response body exceeds ``MURAL_MAX_BODY_BYTES``."""
 
 
-class MCPProtocolError(Exception):
-    """Frame- or transport-level MCP error (maps to JSON-RPC code -32700)."""
-
-
 class MCPInvalidParamsError(Exception):
-    """Schema or parameter validation error (maps to JSON-RPC code -32602).
+    """Parameter validation error retained for CLI helper compatibility.
 
     The ``path`` attribute points to the offending location using a
     dotted/JSON-pointer-ish notation (e.g. ``$.arguments.mural``).

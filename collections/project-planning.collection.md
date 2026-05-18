@@ -46,6 +46,7 @@ Create architecture decision records, requirements documents, and diagrams — a
 
 | Name                                           | Description                                                                                                                                                                                                                                                 |
 |------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **experimental/mural/mural-bootstrap**         | Fresh-session Mural bootstrap requirements for doctor checks, credential backend selection, and safe escalation before Mural tool use.                                                                                                                      |
 | **experimental/mural/mural-destinations**      | Open destination registry for Mural extractor writeback: registered adapters, intent axis, and per-destination loop-closure metrics.                                                                                                                        |
 | **experimental/mural/mural-human-record**      | Mural is the durable record of human conversation; AI never silently authors decisions and AI contribution must remain visible somewhere durable.                                                                                                           |
 | **experimental/mural/mural-log-hygiene**       | Operator log-hygiene contract for Mural customizations: never echo raw URLs, Azure SAS query strings, OAuth tokens, or Authorization headers; the skill _redact() is a defense-in-depth backstop, not a license to log.                                     |
@@ -76,8 +77,8 @@ Create architecture decision records, requirements documents, and diagrams — a
 
 ### Skills
 
-| Name      | Description                                                                                                                                                                                                                                                                             |
-|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **mural** | Mural workspace, room, mural, and widget workflows via the Mural REST API exposed through both a Python CLI and an embedded stdio MCP server. Use when you need to read or write Mural content, automate widget creation, or run a local Model Context Protocol server backed by Mural. |
+| Name      | Description                                                                                                                                                                           |
+|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **mural** | Mural workspace, room, mural, and widget workflows via the Mural REST API exposed through a Python CLI. Use when you need to read or write Mural content or automate widget creation. |
 
 <!-- END AUTO-GENERATED ARTIFACTS -->

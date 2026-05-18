@@ -105,12 +105,6 @@ def fuzz_validate_redirect_uri(data: bytes) -> None:
         mural._validate_redirect_uri(uri)
 
 
-def fuzz_parse_mcp_frame(data: bytes) -> None:
-    """Fuzz NDJSON frame decoding; only ``MCPProtocolError`` is expected."""
-    with suppress(mural.MCPProtocolError):
-        mural._parse_mcp_frame(data)
-
-
 def fuzz_parse_json_arg(data: bytes) -> None:
     """Fuzz JSON argument parsing; only ``MuralValidationError`` is expected."""
     provider = atheris.FuzzedDataProvider(data)
@@ -157,68 +151,6 @@ def fuzz_build_authorize_url(data: bytes) -> None:
         mural._build_authorize_url(
             client_id, redirect_uri, state, code_challenge, scopes
         )
-
-
-def fuzz_frame_mcp_message(data: bytes) -> None:
-    """Fuzz NDJSON framing of MCP messages with arbitrary JSON-shaped dicts."""
-    provider = atheris.FuzzedDataProvider(data)
-    obj: dict[str, object] = {
-        "jsonrpc": "2.0",
-        "id": provider.ConsumeIntInRange(-(2**31), 2**31 - 1),
-        "method": provider.ConsumeUnicodeNoSurrogates(32),
-        "params": {
-            "name": provider.ConsumeUnicodeNoSurrogates(32),
-            "arguments": {
-                "value": provider.ConsumeUnicodeNoSurrogates(
-                    provider.remaining_bytes()
-                ),
-            },
-        },
-    }
-    framed = mural._frame_mcp_message(obj)
-    # Round-trip: framed output must be parseable back to a dict.
-    parsed = mural._parse_mcp_frame(framed.rstrip(b"\n"))
-    assert isinstance(parsed, dict)
-
-
-def fuzz_validate_tool_input_schema(data: bytes) -> None:
-    """Fuzz the minimal JSON Schema validator.
-
-    Only ``MCPInvalidParamsError`` is expected.
-    """
-    provider = atheris.FuzzedDataProvider(data)
-    type_choice = provider.ConsumeIntInRange(0, 7)
-    type_names = ("string", "integer", "number", "boolean", "array", "object", "null")
-    schema: dict[str, object] = {}
-    if type_choice < len(type_names):
-        schema["type"] = type_names[type_choice]
-    else:
-        schema["type"] = list(type_names[: provider.ConsumeIntInRange(1, 3)])
-    if provider.ConsumeBool():
-        schema["minLength"] = provider.ConsumeIntInRange(0, 16)
-    if provider.ConsumeBool():
-        schema["maxLength"] = provider.ConsumeIntInRange(0, 64)
-    if provider.ConsumeBool():
-        schema["enum"] = [
-            provider.ConsumeUnicodeNoSurrogates(8),
-            provider.ConsumeIntInRange(0, 10),
-        ]
-    value_choice = provider.ConsumeIntInRange(0, 5)
-    value: object
-    if value_choice == 0:
-        value = provider.ConsumeUnicodeNoSurrogates(provider.remaining_bytes())
-    elif value_choice == 1:
-        value = provider.ConsumeIntInRange(-1000, 1000)
-    elif value_choice == 2:
-        value = provider.ConsumeBool()
-    elif value_choice == 3:
-        value = None
-    elif value_choice == 4:
-        value = [provider.ConsumeIntInRange(0, 10) for _ in range(3)]
-    else:
-        value = {"key": provider.ConsumeUnicodeNoSurrogates(16)}
-    with suppress(mural.MCPInvalidParamsError):
-        mural._validate_tool_input_schema(schema, value)
 
 
 def fuzz_loopback_callback_request(data: bytes) -> None:
@@ -299,7 +231,7 @@ def fuzz_parse_token_response(data: bytes) -> None:
 
 
 def fuzz_unwrap_value_envelope(data: bytes) -> None:
-    """Fuzz the MCP single-GET envelope unwrap helper.
+    """Fuzz the single-GET envelope unwrap helper.
 
     The function never raises; this asserts crash-free behavior and the
     documented passthrough invariants across representative input shapes.
@@ -498,13 +430,10 @@ FUZZ_TARGETS = [
     fuzz_parse_pagination_cursor,
     fuzz_validate_asset_url,
     fuzz_validate_redirect_uri,
-    fuzz_parse_mcp_frame,
     fuzz_parse_json_arg,
     fuzz_verify_pkce,
     fuzz_extract_error_payload,
     fuzz_build_authorize_url,
-    fuzz_frame_mcp_message,
-    fuzz_validate_tool_input_schema,
     fuzz_loopback_callback_request,
     fuzz_parse_token_response,
     fuzz_unwrap_value_envelope,
@@ -613,21 +542,6 @@ class TestMuralFuzzHarness:
         mural._validate_asset_url(
             "https://account.blob.core.windows.net/c/asset?sig=xyz"
         )
-
-    @pytest.mark.parametrize(
-        "frame",
-        [b"\x80\x81", b"not-json\n", b'"string"\n', b"[]\n"],
-    )
-    def test_parse_mcp_frame_rejects_invalid(self, frame: bytes) -> None:
-        with pytest.raises(mural.MCPProtocolError):
-            mural._parse_mcp_frame(frame)
-
-    def test_parse_mcp_frame_round_trip(self) -> None:
-        encoded = mural._frame_mcp_message({"jsonrpc": "2.0", "id": 1})
-        assert mural._parse_mcp_frame(encoded) == {"jsonrpc": "2.0", "id": 1}
-
-    def test_parse_mcp_frame_empty_returns_none(self) -> None:
-        assert mural._parse_mcp_frame(b"   \n") is None
 
     def test_parse_json_arg_round_trip(self) -> None:
         assert mural._parse_json_arg('{"x":1}', "--body") == {"x": 1}

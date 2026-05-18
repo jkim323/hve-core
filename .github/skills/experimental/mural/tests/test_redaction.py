@@ -193,10 +193,10 @@ def test_logger_no_bare_exception_calls(mural_module: Any) -> None:
     )
 
 
-def test_logger_elicitation_failure_wraps_exc_in_redact(
+def test_top_level_error_wraps_exc_repr_in_redact(
     mural_module: Any,
 ) -> None:
-    """Elicitation hook failure log must redact `repr(exc)`."""
+    """Top-level error handling must redact `repr(exc)`."""
     src = pathlib.Path(mural_module.__file__).read_text(encoding="utf-8")
     assert "_redact(repr(exc))" in src
 
@@ -252,38 +252,15 @@ def test_logger_format_string_redacts_exception_str_at_runtime(
 def test_logger_format_string_redacts_exception_repr_at_runtime(
     mural_module: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Runtime guard: elicitation hook failures must not leak credentials
+    """Runtime guard: unexpected failures must not leak credentials
     that appear in the raised exception's `repr()`."""
     exc = RuntimeError(f"client_secret={SECRET_VALUE}")
     with caplog.at_level(logging.ERROR, logger=mural_module.LOGGER.name):
         mural_module.LOGGER.error(
-            "elicitation hook failed for tool %s: %s",
-            "mural_workspace_list",
+            "unexpected error for command %s: %s",
+            "mural workspace list",
             mural_module._redact(repr(exc)),
         )
     assert SECRET_VALUE not in caplog.text
 
 
-def test_elicitation_hook_failure_redacts_credentials_in_log(
-    mural_module: Any, caplog: pytest.LogCaptureFixture
-) -> None:
-    """End-to-end: register an elicitation hook that raises with a credential
-    in its message, then trigger `_maybe_elicit` and assert the log entry
-    has the credential redacted.
-    """
-
-    def leaky_hook(name: str, arguments: dict[str, Any]) -> bool:
-        raise RuntimeError(f"client_secret={SECRET_VALUE}")
-
-    mural_module._ELICITATION_HOOK = leaky_hook
-    mural_module._CLIENT_CAPABILITIES = {"elicitation": {}}
-    try:
-        with caplog.at_level(logging.ERROR, logger=mural_module.LOGGER.name):
-            result = mural_module._maybe_elicit("mural_workspace_list", {})
-    finally:
-        mural_module._ELICITATION_HOOK = None
-        mural_module._CLIENT_CAPABILITIES = None
-
-    assert result is False
-    assert SECRET_VALUE not in caplog.text
-    assert "elicitation hook failed for tool mural_workspace_list" in caplog.text

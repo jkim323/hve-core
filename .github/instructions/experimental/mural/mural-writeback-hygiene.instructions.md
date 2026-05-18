@@ -20,23 +20,23 @@ Writeback *must* limit itself to these three fields. Composite tools that scaffo
 ## Forbidden writes
 
 * `text` on any widget the writeback step did not just create in the same call.
-* Removing the reserved `authored-by-ai` tag without `--force-reserved` (or `force_reserved=True` on the MCP surface).
+* Removing the reserved `authored-by-ai` tag without `--force-reserved`.
 * Updating or deleting any widget that does not carry the reserved `authored-by-ai` tag unless `--require-author-tag` is satisfied or `--force-human` is set; the skill raises `MuralHumanAuthoredProtected` (exit 77) otherwise.
 
 ## Tag merge semantics
 
 * Tag mutations route through `_merge_tags` (read-modify-write with up to 3 attempts and jittered 50–200ms backoff). Never PATCH the full `tags[]` array directly.
 * On verification failure after retries, `_merge_tags` raises `MuralTagMergeConflict` (exit 75) with `{intended, observed, missing, extra, attempts}`. Surface that envelope to the user; do not retry blindly.
-* Tag IDs are workspace-scoped. Look up or create tags via `mural_tag_list` / `mural_tag_create`; do not hardcode IDs across workspaces.
+* Tag IDs are workspace-scoped. Look up or create tags via `mural tag list` and `mural tag create`; do not hardcode IDs across workspaces.
 
 ## Reserved tag invariant
 
 The skill reserves a fixed set of tag prefixes for machine semantics:
 
-* `authored-by-ai` — set on every widget AI authors.
-* `dt:method=<n>`, `dt:section=<name>` — DT lineage on composite outputs.
-* `destination:<adapter-id>` — set during retro / extractor writeback (see [mural-destinations.instructions.md](mural-destinations.instructions.md)).
-* `intent:<create|mutate|append|no-op>` — set during retro / extractor writeback.
+* `authored-by-ai`: set on every widget AI authors.
+* `dt:method=<n>`, `dt:section=<name>`: DT lineage on composite outputs.
+* `destination:<adapter-id>`: set during retro / extractor writeback (see [mural-destinations.instructions.md](mural-destinations.instructions.md)).
+* `intent:<create|mutate|append|no-op>`: set during retro / extractor writeback.
 
 Reserved tags are recognized by `_is_reserved_tag_id`. Removal requires `--force-reserved`. Manual creation of tags using these prefixes for non-skill purposes is forbidden.
 
@@ -47,7 +47,7 @@ Every writeback that closes a workshop must re-apply the tag manifest before exi
 1. Resolve the manifest from `_read_tag_manifest` (per-mural manifest of expected tags).
 2. Call `_ensure_tag_manifest` to verify tags are present and apply missing ones via `_merge_tags`.
 3. If `_ensure_tag_manifest` returns `tag_cap_reached`, surface the warning and stop further tag mutations on the affected widgets.
-4. Use `mural_repair_tag_drift` to reconcile a widget whose tag set has drifted from the manifest. The repair is additive only (does not strip tags the user added in the workshop).
+4. Use `mural repair-tag-drift` to reconcile a widget whose tag set has drifted from the manifest. The repair is additive only (does not strip tags the user added in the workshop).
 
 ## Mode-aware writeback
 

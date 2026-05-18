@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: MIT
-"""AST-based contract tests: every CLI/MCP handler pair must emit shape-compatible JSON.
+"""AST-based contract tests for CLI/tool JSON output shapes.
 
 Statically parses every ``*.py`` file under the ``mural`` package and compares the
 literal-dict output shapes of paired ``_cmd_<name>`` and ``_tool_<name>`` handlers.
@@ -23,7 +23,7 @@ import pytest
 
 MURAL_PKG = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "mural"
 
-# CLI commands that have no MCP counterpart by design.
+# CLI commands that have no tool counterpart by design.
 ALLOWED_CLI_ONLY: frozenset[str] = frozenset(
     {
         "auth_login",
@@ -33,14 +33,13 @@ ALLOWED_CLI_ONLY: frozenset[str] = frozenset(
         "auth_use",
         "auth_logout",
         "auth_migrate",
-        "mcp",
         "widget_diff",
         "spatial_not_implemented",
     }
 )
 
-# MCP tools that have no CLI counterpart by design.
-ALLOWED_MCP_ONLY: frozenset[str] = frozenset({"voting_run"})
+# Tool handlers that have no CLI counterpart by design.
+ALLOWED_TOOL_ONLY: frozenset[str] = frozenset({"voting_run"})
 
 # Internal helpers under the ``_tool_`` prefix that are not first-class tools.
 TOOL_HELPERS: frozenset[str] = frozenset({"layout"})
@@ -200,14 +199,14 @@ def test_no_unaccounted_tool_handlers(
     unaccounted = sorted(
         tool
         for tool in tools
-        if tool not in ALLOWED_MCP_ONLY
+        if tool not in ALLOWED_TOOL_ONLY
         and tool not in TOOL_HELPERS
         and NAME_QUIRKS.get(tool, tool) not in cmds
     )
     assert not unaccounted, (
         "_tool_* handlers without a paired _cmd_* and not exempt: "
         f"{unaccounted}. Add a paired command, register a name quirk, "
-        "or update ALLOWED_MCP_ONLY / TOOL_HELPERS."
+        "or update ALLOWED_TOOL_ONLY / TOOL_HELPERS."
     )
 
 
@@ -218,7 +217,7 @@ def test_handler_pair_shape_parity(
     cmds, tools = handlers
     drifts: list[str] = []
     for tool_name, tool_node in tools.items():
-        if tool_name in ALLOWED_MCP_ONLY or tool_name in TOOL_HELPERS:
+        if tool_name in ALLOWED_TOOL_ONLY or tool_name in TOOL_HELPERS:
             continue
         cmd_name = NAME_QUIRKS.get(tool_name, tool_name)
         cmd_node = cmds.get(cmd_name)
@@ -235,10 +234,10 @@ def test_handler_pair_shape_parity(
             only_tool = sorted(tool_keys - cmd_keys)
             drifts.append(
                 f"  _cmd_{cmd_name} vs _tool_{tool_name}: "
-                f"only in CLI: {only_cmd}, only in MCP: {only_tool}"
+                f"only in CLI: {only_cmd}, only in tool: {only_tool}"
             )
     assert not drifts, (
-        "CLI/MCP handler pairs emit different top-level JSON keys:\n"
+        "CLI/tool handler pairs emit different top-level JSON keys:\n"
         + "\n".join(drifts)
         + "\nAlign the literal-dict shapes on both sides."
     )

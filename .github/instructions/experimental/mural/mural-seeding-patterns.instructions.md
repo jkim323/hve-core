@@ -11,7 +11,17 @@ The skill is content-agnostic transport. An under-populated board surfaces as a 
 
 ## Agent-Owned Element and Parent Intent
 
-Before generating payloads, the consuming agent chooses the Mural element type, source-artifact decomposition, expected cardinality, placement intent, and parent-area intent. Sticky notes are for short atomic cards. Textboxes are for labels, summaries, explanatory text, or longer content. Areas are for containers, phases, swimlanes, groups, and navigation zones. Shapes, connectors, or other supported widgets are selected only when the source artifact needs that visual semantics.
+Before generating payloads, the consuming agent chooses the Mural element type, source-artifact decomposition, expected cardinality, placement intent, and parent-area intent. Apply this widget-type decision rule before writing any payload:
+
+* Use a textbox for verbatim user content.
+* Use a textbox for content over 15 words or over 120 characters.
+* Use a textbox for lists, paragraphs, code, tables, or other structured layouts.
+* Use a textbox for labels, headers, rationales, summaries, or explanatory annotations.
+* Use a sticky note only for a short atomic card.
+* Use an area for a container, phase, swimlane, group, or navigation zone.
+* Use a shape, connector, or other supported widget only when the source artifact needs that visual semantics.
+
+Textbox `text` is a plain string. Use embedded newlines as the list and soft-break primitive, for example `"* item one\n* item two"`; do not expect Markdown rendering inside the Mural widget.
 
 Generated dictionary payloads must declare an explicit `type`. An untyped dictionary is a consuming-agent authoring error. String-only payloads are allowed only when the agent intentionally wants a small sticky note and the target parent area is already known.
 
@@ -35,18 +45,18 @@ Workflow-specific binding tables (RAI A1 / A2 / A3 wedges, UX JTBD / Journey Sta
 
 ## Anchor Inheritance
 
-When the source board ships per-area placeholder widgets, do not invent `(x, y)`, `(width, height)`, or `style.backgroundColor` for seeded stickies. Pair seeded stickies to placeholder anchors by reading order `(y, x)`, copy geometry and fill, PATCH via `mural widget update-bulk`, then `mural widget delete` only the anchors that were consumed.
+When the source board ships per-area placeholder widgets, do not invent `(x, y)`, `(width, height)`, or `style.backgroundColor` for seeded widgets. Pair seeded widgets to placeholder anchors by reading order `(y, x)`, copy geometry and fill, PATCH via `mural widget update-bulk`, then `mural widget delete` only the anchors that were consumed.
 
 ```text
 anchors = sort(placeholders, by=(y, x))
-seeds   = sort(new_stickies, by=author_order)
+seeds   = sort(new_widgets, by=author_order)
 for a, s in zip(anchors, seeds): patch(s, geometry=a, fill=a.style.backgroundColor)
 delete(consumed_anchor_ids)
 ```
 
 ## Probe-before-Bulk
 
-Use `mural area probe` (CLI) / `mural_area_probe` (MCP) before bulk-populating any area. The verb creates a 1×1 probe sticky bound to the target `parentId`, retrieves it with full context (`area_chain` plus siblings), runs binding and occlusion checks, and deletes the probe — returning one verdict per area:
+Use `mural area probe` before bulk-populating any area. The verb creates a 1×1 probe sticky bound to the target `parentId`, retrieves it with full context (`area_chain` plus siblings), runs binding and occlusion checks, and deletes the probe, returning one verdict per area:
 
 * `ok` — area is safe for bulk seeding.
 * `unbound` — empty `area_chain`. Hard stop: surface the area id and observed parent ids, do not bulk-populate into an unbound area.
@@ -61,9 +71,15 @@ A clean (`ok`) probe is also positive evidence that the chosen `parentId` resolv
 
 The Mural REST API exposes no canvas z-order operation as of May 2026 (see `https://developers.mural.co/public/reference/`). This is an upstream constraint, not a deferred skill feature: the widget endpoint surface is limited to typed `/widgets/{type}` POST/PATCH/DELETE, and the only widget field that resembles ordering, `presentationIndex`, is documented as outline-panel order, not canvas stacking. A correctly bound widget (`area_chain` non-empty, geometry inside the area) can therefore still render behind a sibling background panel, title bar, or frame.
 
-`mural area probe` / `mural_area_probe` detects this case and returns `verdict: "occluded"` with the offending sibling ids in `siblings_above`. Treat `occluded` as a hard stop that escalates to the human operator: surface the affected area id and the `siblings_above` ids, pause the seeding workflow, and ask the operator to fix stacking in the Mural UI (right-click "Send to Back" / "Bring to Front", or restructure the area's anchor widgets). Do not re-run `mural area probe`, do not destroy and recreate the widget hoping it lands on top, and do not hand-tune `(x, y)` offsets to dodge the occluding sibling. None of these patterns can defeat the API ceiling, and destroy-and-recreate also costs widget id, comments, and edit history with no determinism guarantee.
+`mural area probe` detects this case and returns `verdict: "occluded"` with the offending sibling ids in `siblings_above`. Treat `occluded` as a hard stop that escalates to the human operator: surface the affected area id and the `siblings_above` ids, pause the seeding workflow, and ask the operator to fix stacking in the Mural UI (right-click "Send to Back" / "Bring to Front", or restructure the area's anchor widgets). Use this escalation template:
 
-Anchor Inheritance sidesteps this failure entirely when the source board ships per-area placeholders, because consumed anchors inherit both geometry and z-order slot. Prefer Anchor Inheritance whenever the source board has any per-area widgets, even ones that look purely decorative.
+```text
+Mural seeding paused because the probe widget for area <area_id> is hidden behind sibling widget(s): <siblings_above>. Please open the board in Mural, send the occluding background/frame widget(s) to the back or bring the intended anchor layer to the front, then rerun the seeding step.
+```
+
+Do not re-run `mural area probe`, do not destroy and recreate the widget hoping it lands on top, and do not hand-tune `(x, y)` offsets to dodge the occluding sibling. None of these patterns can defeat the API ceiling, and destroy-and-recreate also costs widget id, comments, and edit history with no determinism guarantee.
+
+Anchor Inheritance sidesteps this failure entirely when the source board ships per-area placeholders, because consumed anchors inherit both geometry and z-order slot. Use Anchor Inheritance whenever the source board has any per-area widgets, even ones that look purely decorative.
 
 ## Layout-Primitive Enforcement
 

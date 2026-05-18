@@ -20,15 +20,6 @@ def test_build_parser_registers_top_level_commands(mural_module: Any) -> None:
     assert args.func is mural_module._cmd_auth_status
 
 
-def test_build_parser_routes_mcp_subcommand(mural_module: Any) -> None:
-    parser = mural_module._build_parser()
-
-    args = parser.parse_args(["mcp"])
-
-    assert args.command == "mcp"
-    assert args.func is mural_module._cmd_mcp
-
-
 def test_build_parser_routes_widget_create_sticky_note(mural_module: Any) -> None:
     parser = mural_module._build_parser()
 

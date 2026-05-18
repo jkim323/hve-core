@@ -110,18 +110,18 @@ Integrate these requirements into the accessibility section of the journey map r
 
 ### Step 5: Mural Board Bootstrap (optional)
 
-Offer to seed a Mural board for UX research outputs when the user wants a visible team artifact. The `mural` MCP server is required. Cross-cutting conventions (duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, layout-primitive enforcement, 404 recovery, reserved tag hygiene) are owned by `#file:.github/instructions/experimental/mural/mural-seeding-patterns.instructions.md`; do not restate the six patterns here.
+Offer to seed a Mural board for UX research outputs when the user wants a visible team artifact. Use the `mural` CLI for board seeding. Cross-cutting conventions (duplicate-then-populate, source-artifact-to-area binding, anchor inheritance, probe-before-bulk, layout-primitive enforcement, 404 recovery, reserved tag hygiene) are owned by `#file:.github/instructions/experimental/mural/mural-seeding-patterns.instructions.md`; do not restate the six patterns here.
 
-Before invoking the Mural skill, own the UX board contract: choose the element type for each research output, decompose artifacts into the expected item count for JTBD, Journey Stages, Pain Points, Opportunities, and Accessibility Requirements, resolve the target parent area or placeholder anchor for every widget, and choose the placement intent. UX research rows normally become explicit `sticky-note` dictionaries; use textboxes, areas, or connectors only when the artifact needs those semantics.
+Before any `mural <verb>` call in a fresh session, run `mural doctor` and act on the verdict according to `#file:.github/instructions/experimental/mural/mural-bootstrap.instructions.md`. Before invoking the Mural skill, own the UX board contract: choose the element type for each research output using the explicit widget-type decision rule in `#file:.github/instructions/experimental/mural/mural-seeding-patterns.instructions.md`, decompose artifacts into the expected item count for JTBD, Journey Stages, Pain Points, Opportunities, and Accessibility Requirements, resolve the target parent area or placeholder anchor for every widget, and choose the placement intent. Every generated widget dictionary declares an explicit `type`.
 
 Verb sequence:
 
 1. `mural compose bootstrap-ux-board --workspace <id> --mural <id>` to provision the five UX areas: JTBD, Journey Stages, Pain Points, Opportunities, Accessibility Requirements.
 2. `mural area list` to resolve the five area ids by title.
 3. `mural tag create` to assert the reserved tag manifest (`authored-by-ai`, `ux-research`).
-4. `mural widget create-bulk` to write a single probe sticky and verify `areaChain` resolves correctly.
-5. `mural widget create-bulk` per area, writing one sticky per item: JTBD job statements, journey stage rows, pain points, opportunities, accessibility requirements.
-6. `mural widget update-bulk` for anchor inheritance: copy `(x, y, w, h, style.backgroundColor)` from per-area placeholder anchors onto the new stickies.
+4. `mural area probe` before any parented `mural widget create-bulk` call.
+5. `mural widget create-bulk` per area, writing one generated widget per item: JTBD job statements, journey stage rows, pain points, opportunities, accessibility requirements.
+6. `mural widget update-bulk` for anchor inheritance: copy `(x, y, w, h, style.backgroundColor)` from per-area placeholder anchors onto the new widgets.
 
 ### Step 6: Design Handoff
 

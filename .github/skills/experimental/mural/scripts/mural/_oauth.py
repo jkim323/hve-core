@@ -444,8 +444,8 @@ def _run_login(
     try:
         _emit(f"listening on {redirect_uri}", level=logging.INFO)
         # Emit the authorize URL to stderr before opening the browser so
-        # headless / no-DISPLAY callers (SSH, MCP stdio) can still complete
-        # the flow. ``code_challenge`` is public by PKCE design and is not
+        # headless / no-DISPLAY callers (SSH, remote terminals) can still
+        # complete the flow. ``code_challenge`` is public by PKCE design and is not
         # in ``_REDACT_KEYS``; ``code_verifier`` is and would mangle this
         # URL if it ever appeared here, but PKCE keeps the verifier client-
         # side only.

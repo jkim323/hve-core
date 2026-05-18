@@ -937,25 +937,3 @@ def test_area_probe_verdict_occluded_recommends_operator_escalation(
     assert "mural-seeding-patterns.instructions.md" in rec
 
 
-def test_mural_area_probe_tool_description_carries_operator_contract(
-    mural_module: Any,
-) -> None:
-    """The MCP tool description is the LLM-facing surface for the contract.
-
-    Callers (dt-coach, rai-planner, ux-ui-designer) read this description
-    when deciding whether to invoke the tool. The recommendation string in
-    the response body is necessary but not sufficient: by the time an LLM
-    parses it, the seeding workflow may already be in flight. Pin the
-    contract language at the entry point so the hard-stop semantics are
-    visible before invocation.
-    """
-    spec = mural_module._TOOL_REGISTRY["mural_area_probe"]
-    description = spec["description"]
-    assert "occluded" in description
-    assert "hard stop" in description
-    assert "operator" in description
-    assert "Mural UI" in description
-    assert "'Send to Back'" in description
-    assert "Do not re-run the probe" in description
-    assert "destroy and recreate" in description
-    assert "mural-seeding-patterns.instructions.md" in description

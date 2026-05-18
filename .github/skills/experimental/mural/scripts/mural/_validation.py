@@ -54,8 +54,7 @@ _ALLOWED_HYPERLINK_SCHEMES: frozenset[str] = frozenset({"http", "https", "mailto
 _VALID_AREA_LAYOUTS: frozenset[str] = frozenset({"free", "column", "row"})
 
 # Module-level cache of area metadata keyed by area id. Populated by
-# ``_get_area`` (used by area-aware traversal helpers) and the MCP/CLI
-# ``area get`` handlers. Process-local; not persisted.
+# ``_get_area`` and the CLI ``area get`` handler. Process-local; not persisted.
 _area_cache: dict[str, dict[str, Any]] = {}
 
 
