@@ -2,7 +2,7 @@
 title: PR Reference Skill Reference
 description: XML output format, usage scenarios, output path variations, and semantic invocation patterns
 author: Microsoft
-ms.date: 2026-02-18
+ms.date: 2026-05-21
 ms.topic: reference
 keywords:
   - pr-reference
