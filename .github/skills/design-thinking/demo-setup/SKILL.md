@@ -23,7 +23,6 @@ Core design constraints:
 * The hifi-prototype skill handles all scaffold generation and experiment framing.
 * Presenter's guide included so demos are repeatable without memorizing the flow.
 * Demo video script generated for recording a polished walkthrough video.
-* Built-in example scenarios available for immediate use without custom input.
 
 ## Prerequisites
 
@@ -33,10 +32,10 @@ Core design constraints:
 
 ## Quick Start
 
-Run a demo with a built-in scenario:
+Run a demo with custom inputs:
 
-1. Invoke `/demo-setup` with `customer=IFS`, `industry=field service`, `scenario=ifs-smartparts`.
-2. The DT Coach walks through Methods 1 through 6 with a pre-built persona and conversation seeds.
+1. Invoke `/demo-setup` with `customer={name}`, `industry={vertical}`, and optionally `persona` and `problem`.
+2. The DT Coach walks through Methods 1 through 6 with a generated persona and conversation seeds.
 3. At Method 7 the hifi-prototype skill scaffolds a runnable prototype.
 4. Open `index.html` in a browser and follow the presenter's guide in `README.md`.
 
@@ -62,7 +61,6 @@ Run a demo with a built-in scenario:
 | `industry` | Yes | Industry vertical (field service, government, healthcare, manufacturing, energy) |
 | `persona` | No | End-user persona name and role. Generated from customer and industry context when omitted |
 | `problem` | No | Brief problem statement. Inferred from industry patterns when omitted |
-| `scenario` | No | Built-in scenario key (`ifs-smartparts`, `nydoc-verify`) or `custom` for user-provided context. Defaults to `custom` |
 | `accelerated` | No | Whether to use accelerated DT method pacing for demo purposes. Defaults to `true` |
 
 ## Customer Persona Brief Template
@@ -131,13 +129,12 @@ Follow the six-step workflow to set up a complete HVE Core demo. Each step build
 
 ### Step 1: Define Customer Scenario
 
-Accept customer context from user inputs or let them select a built-in example scenario.
+Accept customer context from user inputs and generate the persona brief.
 
-1. If `scenario` matches a built-in example, generate the persona brief from the built-in example data in the Built-In Example Scenarios section.
-2. If custom inputs are provided, generate a Customer Persona Brief from the `customer`, `industry`, `persona`, and `problem` inputs.
-3. Fill all sections of the Customer Persona Brief Template, including conversation seeds tailored to the industry and problem.
-4. Derive the project slug: for built-in scenarios, use the scenario key as the slug (for example, `ifs-smartparts` or `nydoc-verify`). For custom scenarios, strip all characters except letters, digits, and spaces from the customer name, collapse consecutive spaces, then lowercase and replace spaces with hyphens (for example, `Contoso Manufacturing` becomes `contoso-manufacturing`, `O'Brien & Co.` becomes `obrien-co`). If the resulting slug is empty, prompt the user for a valid customer name.
-5. Save the brief to `.copilot-tracking/dt/{project-slug}/context/customer-persona-brief.md` using the project slug derived above.
+1. Generate a Customer Persona Brief from the `customer`, `industry`, `persona`, and `problem` inputs.
+2. Fill all sections of the Customer Persona Brief Template, including conversation seeds tailored to the industry and problem.
+3. Derive the project slug from the customer name: strip all characters except letters, digits, and spaces, collapse consecutive spaces, then lowercase and replace spaces with hyphens (for example, `Contoso Manufacturing` becomes `contoso-manufacturing`, `O'Brien & Co.` becomes `obrien-co`). If the resulting slug is empty, prompt the user for a valid customer name.
+4. Save the brief to `.copilot-tracking/dt/{project-slug}/context/customer-persona-brief.md` using the project slug derived above.
 
 Checkpoint: persona brief exists with all sections populated.
 
@@ -237,42 +234,6 @@ Generate a `demo-video-script.md` in the prototype directory with a complete nar
 
 Checkpoint: `demo-video-script.md` exists with all sections populated and timing annotations.
 
-## Built-In Example Scenarios
-
-Two pre-built scenarios are available for immediate use without custom inputs. Each includes a complete persona brief with conversation seeds.
-
-The scenario slug names the DT coaching state directory under `.copilot-tracking/dt/`, while the prototype directory names the runnable code location in the workspace root. These are separate concerns: coaching artifacts and prototype code live in different trees.
-
-### Field Service AI (IFS SmartParts)
-
-| Field | Value |
-|---|---|
-| Industry | Field service management |
-| Customer | IFS (enterprise software, 7000+ employees) |
-| Persona | Marcus Ohlsson, field service technician |
-| Problem | Technicians arrive at job sites without the correct replacement parts, causing return visits and customer dissatisfaction |
-| Concept | AI agent analyzes failure history and peer evidence to suggest parts for the morning truck load |
-| Slug | `ifs-smartparts` |
-| Prototype directory | `ifs-smartparts-predict/` |
-| Prototype | Smart Load List with IFS Loops agent suggestion cards and flywheel close-out screen |
-
-Reference files: `ifs-smartparts-predict/experiment-card.md`, `ifs-smartparts-predict/sim/fixtures/jobs.js`
-
-### Government Process Optimization (NYDoc Verify)
-
-| Field | Value |
-|---|---|
-| Industry | Government / corrections |
-| Customer | NY State Department of Corrections |
-| Persona | Unit Team counselor at Reception/Diagnostic Unit |
-| Problem | Manual custody classification is slow and error-prone, with counselors spending over 20 minutes per inmate on scoring and data lookup |
-| Concept | System pre-scores inmates with confidence indicators, counselor verifies rather than calculates from scratch |
-| Slug | `nydoc-verify` |
-| Prototype directory | `nydoc-verify-prototype/` |
-| Prototype | Classification review screen with confidence indicators and housing pipeline board |
-
-Reference files: `nydoc-verify-prototype/experiment-card.md`, `nydoc-verify-prototype/sim/fixtures/inmates.js`
-
 ## Demo Scaffold Template
 
 Every demo scaffold follows a fixed structure. The hifi-prototype skill generates this layout with demo-specific content.
@@ -338,7 +299,6 @@ Each step of the demo workflow showcases specific HVE Core tools and features.
 - [ ] Demo video script exists with all sections, visual cues, and timing annotations
 - [ ] All simulated components display `[SIMULATED]` badges
 - [ ] Experiment banner visible on every prototype page
-- [ ] Built-in example scenarios execute without errors when selected
 
 ## Troubleshooting
 
@@ -355,7 +315,7 @@ Each step of the demo workflow showcases specific HVE Core tools and features.
 
 ## Demo Video Script Template
 
-The demo video script follows a fixed section structure. Each section includes narrator text (blockquoted) and visual stage directions (bracketed). The template reference is `demos/contoso/order-intake/demo-video-script.md`.
+The demo video script follows a fixed section structure. Each section includes narrator text (blockquoted) and visual stage directions (bracketed). The template reference is `references/demo-video-script-template.md`.
 
 ### Script Structure
 
@@ -377,7 +337,7 @@ The demo video script follows a fixed section structure. Each section includes n
 * Visual cues appear in `**[VISUAL: description]**` format before the narrator text they accompany.
 * Narrator text uses blockquote format (`>`) for spoken words.
 * Demo prompts (text the presenter types on screen) appear in a dedicated code block labeled with the prompt context.
-* Each prototype demo section covers one screen of the prototype. Name the section after the screen (for example, "Order Queue Demo" or "Classification Review Demo").
+* Each prototype demo section covers one screen of the prototype. Name the section after the screen (for example, "Order Queue Demo" or "Dashboard Demo").
 * Timing annotations appear in parentheses in each section heading (for example, `## COLD OPEN (0:00 - 0:30)`).
 * The "Where to Start" section includes three subsections, one per agent, each with a typed prompt and narration of the agent's response.
 * Production Notes table includes at minimum: screen recording tool, browser, VS Code theme, font size, resolution, and any pre-recording reset steps (for example, clearing localStorage).
