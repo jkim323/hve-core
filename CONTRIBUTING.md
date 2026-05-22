@@ -23,6 +23,49 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 > * Star the project or add it to your favorites
 > * Mention the project to your peer studio crews and tell your work friends/colleagues
 
+## Table of Contents
+
+* [Build and Validation Requirements](#build-and-validation-requirements)
+  * [Required Tools](#required-tools)
+  * [Validation Commands](#validation-commands)
+  * [Development Environment](#development-environment)
+* [Table of Contents](#table-of-contents)
+* [Code of Conduct](#code-of-conduct)
+* [I Have a Question](#i-have-a-question)
+* [I Want To Contribute](#i-want-to-contribute)
+  * [Reporting Bugs](#reporting-bugs)
+    * [Before Submitting a Bug Report](#before-submitting-a-bug-report)
+    * [How Do I Submit a Good Bug Report?](#how-do-i-submit-a-good-bug-report)
+  * [Suggesting Enhancements](#suggesting-enhancements)
+    * [Before Submitting an Enhancement](#before-submitting-an-enhancement)
+    * [How Do I Submit a Good Enhancement Suggestion?](#how-do-i-submit-a-good-enhancement-suggestion)
+  * [Your First Code Contribution](#your-first-code-contribution)
+  * [Improving The Documentation](#improving-the-documentation)
+* [AI Artifact Contributions](#ai-artifact-contributions)
+  * [Getting Started with AI Artifacts](#getting-started-with-ai-artifacts)
+  * [Artifact Types](#artifact-types)
+  * [Essential Resources](#essential-resources)
+  * [Quick Reference](#quick-reference)
+* [Dependabot Pull Requests](#dependabot-pull-requests)
+* [Pull Request Inactivity Policy](#pull-request-inactivity-policy)
+  * [Active Pull Requests](#active-pull-requests)
+  * [Draft Pull Requests](#draft-pull-requests)
+  * [Exemptions](#exemptions)
+* [Style Guides](#style-guides)
+  * [Local Development Setup](#local-development-setup)
+  * [Coding Conventions](#coding-conventions)
+  * [Copyright and License Headers](#copyright-and-license-headers)
+* [Testing Requirements](#testing-requirements)
+  * [When Tests Are Required](#when-tests-are-required)
+  * [Test Conventions](#test-conventions)
+  * [Running Tests Locally](#running-tests-locally)
+* [Release Process](#release-process)
+  * [How Releases Work](#how-releases-work)
+  * [Version Determination](#version-determination)
+  * [Commit Message Examples](#commit-message-examples)
+  * [Release Validation](#release-validation)
+* [Attribution](#attribution)
+
 ## Build and Validation Requirements
 
 This project uses several tools to maintain code quality and consistency:
@@ -67,49 +110,6 @@ For additional validation commands specific to AI artifacts (agents, prompts, in
 ### Development Environment
 
 We strongly recommend using the provided DevContainer, which comes pre-configured with all required tools. See the [DevContainer README](./.devcontainer/README.md) for setup instructions.
-
-## Table of Contents
-
-* [Build and Validation Requirements](#build-and-validation-requirements)
-  * [Required Tools](#required-tools)
-  * [Validation Commands](#validation-commands)
-  * [Development Environment](#development-environment)
-* [Table of Contents](#table-of-contents)
-* [Code of Conduct](#code-of-conduct)
-* [I Have a Question](#i-have-a-question)
-* [I Want To Contribute](#i-want-to-contribute)
-  * [Reporting Bugs](#reporting-bugs)
-    * [Before Submitting a Bug Report](#before-submitting-a-bug-report)
-    * [How Do I Submit a Good Bug Report?](#how-do-i-submit-a-good-bug-report)
-  * [Suggesting Enhancements](#suggesting-enhancements)
-    * [Before Submitting an Enhancement](#before-submitting-an-enhancement)
-    * [How Do I Submit a Good Enhancement Suggestion?](#how-do-i-submit-a-good-enhancement-suggestion)
-  * [Your First Code Contribution](#your-first-code-contribution)
-  * [Improving The Documentation](#improving-the-documentation)
-* [AI Artifact Contributions](#ai-artifact-contributions)
-  * [Getting Started with AI Artifacts](#getting-started-with-ai-artifacts)
-  * [Artifact Types](#artifact-types)
-  * [Essential Resources](#essential-resources)
-  * [Quick Reference](#quick-reference)
-* [Dependabot Pull Requests](#dependabot-pull-requests)
-* [Pull Request Inactivity Policy](#pull-request-inactivity-policy)
-  * [Active Pull Requests](#active-pull-requests)
-  * [Draft Pull Requests](#draft-pull-requests)
-  * [Exemptions](#exemptions)
-* [Style Guides](#style-guides)
-  * [Local Development Setup](#local-development-setup)
-  * [Coding Conventions](#coding-conventions)
-  * [Copyright and License Headers](#copyright-and-license-headers)
-* [Testing Requirements](#testing-requirements)
-  * [When Tests Are Required](#when-tests-are-required)
-  * [Test Conventions](#test-conventions)
-  * [Running Tests Locally](#running-tests-locally)
-* [Release Process](#release-process)
-  * [How Releases Work](#how-releases-work)
-  * [Version Determination](#version-determination)
-  * [Commit Message Examples](#commit-message-examples)
-  * [Release Validation](#release-validation)
-* [Attribution](#attribution)
 
 ## Code of Conduct
 
