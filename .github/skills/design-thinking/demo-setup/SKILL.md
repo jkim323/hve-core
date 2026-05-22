@@ -5,7 +5,7 @@ user-invocable: true
 metadata:
   authors: "microsoft/hve-core"
   spec_version: "1.0"
-  last_updated: "2026-05-11"
+  last_updated: "2026-05-22"
 ---
 
 # Demo Setup
@@ -120,7 +120,7 @@ Follow the six-step workflow to set up a complete HVE Core demo. Each step build
 
 | Step | Name | Purpose |
 |---|---|---|
-| 1 | Define Customer Scenario | Accept or generate the customer context and persona brief |
+| 1 | Define Customer Scenario | Generate the customer context and persona brief from user inputs |
 | 2 | Initialize DT Coach Session | Create project structure and start the coaching session |
 | 3 | Guided DT Methods 1-6 | Accelerated coaching with simulated customer conversations |
 | 4 | Prototype Scaffold | Transition to Method 7 and generate the runnable prototype |
@@ -221,7 +221,7 @@ Checkpoint: README contains a complete presenter's walkthrough guide.
 
 Generate a `demo-video-script.md` in the prototype directory with a complete narrated video script for recording the demo.
 
-1. Follow the Demo Video Script Template section structure for the script layout.
+1. Follow the structure in `references/demo-video-script-template.md` for the script layout.
 2. Populate the Cold Open with a vivid scene showing the prototype in action and stating the persona's core pain point.
 3. Write Section 1 (The Problem) using the customer persona brief: organization profile, frustrations, and the specific problem scenario.
 4. Write Section 2 (Design Thinking Coach) walking through the DT artifacts generated in Step 3, highlighting coaching state persistence and artifact lineage.
