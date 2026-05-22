@@ -30,7 +30,7 @@ This project uses several tools to maintain code quality and consistency:
 ### Required Tools
 
 | Tool                      | Purpose                                    |
-|---------------------------|--------------------------------------------||
+|---------------------------|--------------------------------------------|
 | markdownlint-cli2         | Validates markdown formatting and style    |
 | cspell                    | Spell checking across all file types       |
 | markdown-table-formatter  | Ensures consistent table formatting        |
