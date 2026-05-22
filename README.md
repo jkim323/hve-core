@@ -18,12 +18,12 @@ Use HVE Core when you want AI-assisted work to be repeatable, standards-aligned,
 * Instructions that apply coding standards automatically
 * Skills that add reusable tool capabilities
 
-| Component | Count | Reference |
-|-----------|-------|-----------|
-| Agents | 49 | [Agents](.github/CUSTOM-AGENTS.md) |
-| Instructions | 102 | [Instructions](.github/instructions/README.md) |
-| Prompts | 63 | [Prompts](.github/prompts/README.md) |
-| Skills | 11 | [Skills](.github/skills/) |
+| Component    | Count | Reference                                      |
+|--------------|-------|------------------------------------------------|
+| Agents       | 49    | [Agents](.github/CUSTOM-AGENTS.md)             |
+| Instructions | 102   | [Instructions](.github/instructions/README.md) |
+| Prompts      | 63    | [Prompts](.github/prompts/README.md)           |
+| Skills       | 11    | [Skills](.github/skills/)                      |
 
 ## Where to Start
 
@@ -37,35 +37,34 @@ Use HVE Core when you want AI-assisted work to be repeatable, standards-aligned,
 
 > [!TIP]
 > Use [HVE Core All Extension](https://marketplace.visualstudio.com/items?itemName=ise-hve-essentials.hve-core-all) when you want the full collection deployment. See [Collections Overview](docs/getting-started/collections.md).
-
 > [!TIP]
 > Using GitHub Copilot CLI? Install as a plugin instead:
->```bash
+>
+> ```bash
 >copilot plugin marketplace add microsoft/hve-core
 >copilot plugin install hve-core@hve-core
->```
->See [CLI Plugins](docs/getting-started/methods/cli-plugins.md) for usage details.
-
+> ```
+>
+> See [CLI Plugins](docs/getting-started/methods/cli-plugins.md) for usage details.
 
 ## Choose Your Path
 
 * New to Hypervelocity Core: Start with [Start Here](docs/getting-started/README.md) to complete your first workflow quickly.
 * Leading a team: Use the [Team Adoption Guide](docs/customization/team-adoption.md) to roll out standards and onboarding.
 * Contributing to this repo: Follow the [Contributing Guide](CONTRIBUTING.md) to add or improve agents, prompts, instructions, and skills.
- 
+
 ## Navigate This Repository
 
-| Goal | Go here |
-|------|---------|
-| Start quickly | [docs/getting-started/start-here.md](docs/getting-started/start-here.md) |
-| Understand all setup options | [docs/getting-started/install.md](docs/getting-started/install.md) |
-| Learn the core methodology | [docs/rpi/README.md](docs/rpi/README.md) |
-| Browse docs by topic | [docs/README.md](docs/README.md) |
-| Explore agents | [.github/CUSTOM-AGENTS.md](.github/CUSTOM-AGENTS.md) |
-| Explore instructions | [.github/instructions/README.md](.github/instructions/README.md) |
-| Explore prompts | [.github/prompts/README.md](.github/prompts/README.md) |
-| Explore skills | [.github/skills/](.github/skills/) |
-
+| Goal                         | Go here                                                                  |
+|------------------------------|--------------------------------------------------------------------------|
+| Start quickly                | [docs/getting-started/start-here.md](docs/getting-started/start-here.md) |
+| Understand all setup options | [docs/getting-started/install.md](docs/getting-started/install.md)       |
+| Learn the core methodology   | [docs/rpi/README.md](docs/rpi/README.md)                                 |
+| Browse docs by topic         | [docs/README.md](docs/README.md)                                         |
+| Explore agents               | [.github/CUSTOM-AGENTS.md](.github/CUSTOM-AGENTS.md)                     |
+| Explore instructions         | [.github/instructions/README.md](.github/instructions/README.md)         |
+| Explore prompts              | [.github/prompts/README.md](.github/prompts/README.md)                   |
+| Explore skills               | [.github/skills/](.github/skills/)                                       |
 
 ## Documentation
 
