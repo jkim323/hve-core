@@ -1,4 +1,21 @@
-# Hypervelocity Engineering(HVE) Core
+---
+title: HVE Core
+description: Hypervelocity Engineering prompt library for GitHub Copilot with convention-driven AI workflows and validated artifacts
+author: Microsoft
+ms.date: 2026-05-04
+ms.topic: overview
+keywords:
+  - hypervelocity engineering
+  - prompt engineering
+  - github copilot
+  - ai workflows
+  - custom agents
+  - copilot instructions
+  - rpi methodology
+estimated_reading_time: 3
+---
+
+## Hypervelocity Engineering(HVE) Core
 
 <!-- markdownlint-disable MD013 -->
 [![CI Status](https://github.com/microsoft/hve-core/actions/workflows/release-stable.yml/badge.svg)](https://github.com/microsoft/hve-core/actions/workflows/release-stable.yml)
