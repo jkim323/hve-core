@@ -59,7 +59,7 @@ Use HVE Core when you want AI-assisted work to be repeatable, standards-aligned,
 
 ## Choose Your Path
 
-* New to Hypervelocity Core: Start with [Start Here](docs/getting-started/README.md) to complete your first workflow quickly.
+* New to HVE-Core: Start with [Start Here](docs/getting-started/README.md) to complete your first workflow quickly.
 * Leading a team: Use the [Team Adoption Guide](docs/customization/team-adoption.md) to roll out standards and onboarding.
 * Contributing to this repo: Follow the [Contributing Guide](CONTRIBUTING.md) to add or improve agents, prompts, instructions, and skills.
 
