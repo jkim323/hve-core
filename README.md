@@ -65,16 +65,16 @@ Use HVE Core when you want AI-assisted work to be repeatable, standards-aligned,
 
 ## Navigate This Repository
 
-| Goal                         | Go here                                                              |
-|------------------------------|----------------------------------------------------------------------|
-| Getting Started              | [docs/getting-started/start-here.md](docs/getting-started/README.md) |
-| Understand all setup options | [docs/getting-started/install.md](docs/getting-started/install.md)   |
-| Learn the core methodology   | [docs/rpi/README.md](docs/rpi/README.md)                             |
-| Browse docs by topic         | [docs/README.md](docs/README.md)                                     |
-| Explore agents               | [.github/CUSTOM-AGENTS.md](.github/CUSTOM-AGENTS.md)                 |
-| Explore instructions         | [.github/instructions/README.md](.github/instructions/README.md)     |
-| Explore prompts              | [.github/prompts/README.md](.github/prompts/README.md)               |
-| Explore skills               | [.github/skills/](.github/skills/)                                   |
+| Goal                         | Go here                                                            |
+|------------------------------|--------------------------------------------------------------------|
+| Getting Started              | [docs/getting-started/README.md](docs/getting-started/README.md)   |
+| Understand all setup options | [docs/getting-started/install.md](docs/getting-started/install.md) |
+| Learn the core methodology   | [docs/rpi/README.md](docs/rpi/README.md)                           |
+| Browse docs by topic         | [docs/README.md](docs/README.md)                                   |
+| Explore agents               | [.github/CUSTOM-AGENTS.md](.github/CUSTOM-AGENTS.md)               |
+| Explore instructions         | [.github/instructions/README.md](.github/instructions/README.md)   |
+| Explore prompts              | [.github/prompts/README.md](.github/prompts/README.md)             |
+| Explore skills               | [.github/skills/](.github/skills/)                                 |
 
 ## Documentation
 
